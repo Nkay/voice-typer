@@ -1,0 +1,48 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>VoiceTyper Settings</title>
+    <style>
+      body { font-family: Segoe UI, sans-serif; margin: 16px; font-size: 14px; }
+      label { display: block; margin-top: 12px; font-weight: 600; }
+      input, select { width: 100%; padding: 6px; margin-top: 4px; box-sizing: border-box; }
+      .row { margin-top: 12px; display: flex; align-items: center; gap: 8px; }
+      .row input[type="checkbox"] { width: auto; }
+      button { margin-top: 20px; padding: 8px 16px; }
+      #status { margin-left: 12px; color: #2e7d32; }
+    </style>
+  </head>
+  <body>
+    <label>Mistral API key
+      <input id="apiKey" type="password" placeholder="leave blank to keep current key" />
+    </label>
+    <label>Language
+      <select id="language">
+        <option value="auto">Auto-detect</option>
+        <option value="de">German</option>
+        <option value="en">English</option>
+      </select>
+    </label>
+    <label>Record key
+      <select id="recordKey">
+        <option value="RIGHT ALT">Right Alt (AltGr)</option>
+        <option value="LEFT ALT">Left Alt</option>
+        <option value="RIGHT CTRL">Right Ctrl</option>
+        <option value="LEFT CTRL">Left Ctrl</option>
+      </select>
+    </label>
+    <label>Microphone
+      <select id="mic"><option value="">Default</option></select>
+    </label>
+    <div class="row">
+      <input id="autoLaunch" type="checkbox" />
+      <label for="autoLaunch" style="margin:0;font-weight:400;">Launch on login</label>
+    </div>
+    <div class="row">
+      <button id="save">Save</button>
+      <span id="status"></span>
+    </div>
+    <script src="settings.js"></script>
+  </body>
+</html>

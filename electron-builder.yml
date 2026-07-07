@@ -1,0 +1,21 @@
+appId: at.chax.voicetyper
+productName: VoiceTyper
+directories:
+  output: dist
+files:
+  - src/**/*
+  - assets/**/*
+  - package.json
+  - "!**/*.test.js"
+asarUnpack:
+  - "**/node_modules/node-global-key-listener/**"
+  - "**/node_modules/@nut-tree-fork/**"
+win:
+  target:
+    - nsis
+    - portable
+  icon: assets/icon.png
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true

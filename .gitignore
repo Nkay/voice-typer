@@ -1,0 +1,13 @@
+# Local IDE / editor
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+node_modules/
+dist/
+out/
+assets/tray/
+assets/icon.png

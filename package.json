@@ -1,0 +1,27 @@
+{
+  "name": "voicetyper",
+  "version": "2.0.0",
+  "description": "Hold a key to record speech and type the Mistral Voxtral transcript at the cursor (Windows).",
+  "main": "src/main/index.js",
+  "scripts": {
+    "start": "electron .",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "icons": "node scripts/gen-icons.js",
+    "dist": "electron-builder --win"
+  },
+  "author": "Simon Jiménez <simon.jimenez@chax.at>",
+  "license": "MIT",
+  "engines": {
+    "node": ">=24"
+  },
+  "dependencies": {
+    "@nut-tree-fork/nut-js": "^4.2.0",
+    "node-global-key-listener": "^0.3.0"
+  },
+  "devDependencies": {
+    "electron": "^31.0.0",
+    "electron-builder": "^24.13.3",
+    "vitest": "^2.0.0"
+  }
+}
