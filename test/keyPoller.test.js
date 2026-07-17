@@ -1,5 +1,6 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { createKeyPoller, KEY_VCODES } from "../src/main/keyPoller.js";
+import { RECORD_KEYS } from "../src/shared/config.js";
 
 const VK = { "RIGHT ALT": 0xa5, "LEFT ALT": 0xa4, "RIGHT CTRL": 0xa3, "LEFT CTRL": 0xa2 };
 
@@ -81,5 +82,57 @@ describe("createKeyPoller", () => {
     expect(KEY_VCODES["LEFT ALT"]).toBe(0xa4);
     expect(KEY_VCODES["RIGHT CTRL"]).toBe(0xa3);
     expect(KEY_VCODES["LEFT CTRL"]).toBe(0xa2);
+  });
+
+  it("stays in lockstep with config.js's RECORD_KEYS whitelist", () => {
+    expect(Object.keys(KEY_VCODES)).toEqual(RECORD_KEYS);
+  });
+
+  it("delivers an event to every registered listener", () => {
+    const h = harness();
+    const events2 = [];
+    h.poller.addListener((e) => events2.push(e));
+
+    h.pressed.add(VK["RIGHT ALT"]);
+    h.tick();
+
+    expect(h.events).toEqual([{ name: "RIGHT ALT", state: "DOWN" }]);
+    expect(events2).toEqual([{ name: "RIGHT ALT", state: "DOWN" }]);
+  });
+
+  it("isolates a throwing listener so later listeners still run, and the next tick still works", () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    const pressed = new Set();
+    let tickFn = null;
+    const timers = {
+      setInterval: (fn) => {
+        tickFn = fn;
+        return "timer-handle";
+      },
+      clearInterval: () => {},
+    };
+    const poller = createKeyPoller({ getKeyState: (vk) => pressed.has(vk), timers });
+    const boom = new Error("boom");
+    poller.addListener(() => {
+      throw boom;
+    });
+    const events = [];
+    poller.addListener((e) => events.push(e));
+
+    pressed.add(VK["RIGHT ALT"]);
+    expect(() => tickFn()).not.toThrow();
+
+    expect(events).toEqual([{ name: "RIGHT ALT", state: "DOWN" }]);
+    expect(consoleError).toHaveBeenCalledWith("VoiceTyper: hotkey listener callback failed", boom);
+
+    pressed.delete(VK["RIGHT ALT"]);
+    expect(() => tickFn()).not.toThrow();
+
+    expect(events).toEqual([
+      { name: "RIGHT ALT", state: "DOWN" },
+      { name: "RIGHT ALT", state: "UP" },
+    ]);
+
+    consoleError.mockRestore();
   });
 });

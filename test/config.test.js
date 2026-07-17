@@ -26,6 +26,18 @@ describe("config", () => {
     expect(c.language).toBe("auto");
   });
 
+  it("falls back to the default recordKey for a value outside RECORD_KEYS", () => {
+    const c = cfg.validateConfig({ ...cfg.DEFAULTS, recordKey: "F13" });
+    expect(c.recordKey).toBe("RIGHT ALT");
+  });
+
+  it("accepts every whitelisted recordKey", () => {
+    for (const key of cfg.RECORD_KEYS) {
+      const c = cfg.validateConfig({ ...cfg.DEFAULTS, recordKey: key });
+      expect(c.recordKey).toBe(key);
+    }
+  });
+
   it("falls back to default sampleRate for a bad value", () => {
     const c = cfg.validateConfig({ ...cfg.DEFAULTS, sampleRate: 0 });
     expect(c.sampleRate).toBe(16000);

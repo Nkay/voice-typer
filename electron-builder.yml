@@ -7,6 +7,8 @@ files:
   - assets/**/*
   - package.json
   - "!**/*.test.js"
+  # koffi ships prebuilt binaries for ~18 platforms; this app is Windows-only.
+  - "!**/node_modules/koffi/build/koffi/{darwin,freebsd,linux,musl,openbsd}*/**"
 asarUnpack:
   - "**/node_modules/koffi/**"
   - "**/node_modules/@nut-tree-fork/**"

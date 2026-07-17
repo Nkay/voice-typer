@@ -11,6 +11,11 @@ const DEFAULTS = {
 
 const LANGUAGES = ["auto", "de", "en"];
 
+// Must match the poller's KEY_VCODES keys in src/main/keyPoller.js — a config
+// value outside this list would set a hotkey that GetAsyncKeyState polling
+// never fires for, leaving the tray showing "active" with a dead hotkey.
+const RECORD_KEYS = ["RIGHT ALT", "LEFT ALT", "RIGHT CTRL", "LEFT CTRL"];
+
 function mergeConfig(overrides) {
   const out = { ...DEFAULTS };
   if (overrides && typeof overrides === "object") {
@@ -27,9 +32,7 @@ function validateConfig(config) {
   if (!Number.isInteger(c.sampleRate) || c.sampleRate <= 0) {
     c.sampleRate = DEFAULTS.sampleRate;
   }
-  if (typeof c.recordKey !== "string" || c.recordKey.trim() === "") {
-    c.recordKey = DEFAULTS.recordKey;
-  }
+  if (!RECORD_KEYS.includes(c.recordKey)) c.recordKey = DEFAULTS.recordKey;
   c.autoLaunch = Boolean(c.autoLaunch);
   return c;
 }
@@ -50,4 +53,12 @@ function saveConfig(filePath, config) {
   fs.writeFileSync(filePath, JSON.stringify(validateConfig(config), null, 2), "utf8");
 }
 
-module.exports = { DEFAULTS, LANGUAGES, mergeConfig, validateConfig, loadConfig, saveConfig };
+module.exports = {
+  DEFAULTS,
+  LANGUAGES,
+  RECORD_KEYS,
+  mergeConfig,
+  validateConfig,
+  loadConfig,
+  saveConfig,
+};

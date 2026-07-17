@@ -25,7 +25,13 @@ function createKeyPoller({
       if (isDown === down[name]) continue;
       down[name] = isDown;
       const event = { name, state: isDown ? "DOWN" : "UP" };
-      for (const cb of listeners) cb(event);
+      for (const cb of listeners) {
+        try {
+          cb(event);
+        } catch (err) {
+          console.error("VoiceTyper: hotkey listener callback failed", err);
+        }
+      }
     }
   };
 
