@@ -4,7 +4,7 @@ import os from "os";
 import { boot } from "../src/main/boot.js";
 
 function fakeDeps() {
-  const captured = { readyCb: null, tray: null };
+  const captured = { readyCb: null, tray: null, notifications: [] };
 
   class FakeBrowserWindow {
     constructor() {
@@ -31,7 +31,10 @@ function fakeDeps() {
   }
   class FakeNotification {
     static isSupported() {
-      return false;
+      return true;
+    }
+    constructor(opts) {
+      captured.notifications.push(opts);
     }
     show() {}
   }
@@ -59,10 +62,7 @@ function fakeDeps() {
     },
     ipcMain: { on: () => {}, handle: () => {} },
     Notification: FakeNotification,
-    GlobalKeyboardListener: class {
-      addListener() {}
-      kill() {}
-    },
+    createListener: () => ({ addListener() {}, kill() {} }),
     keyboard: { config: {} },
     Key: {},
   };
@@ -95,5 +95,21 @@ describe("boot wiring", () => {
 
     const rebuilt = captured.tray.menus.at(-1).find((item) => item.label === "Paused");
     expect(rebuilt.checked).toBe(true);
+  });
+
+  it("keeps booting and notifies when the hotkey listener fails to start", () => {
+    const { deps, captured } = fakeDeps();
+    deps.createListener = () => {
+      throw new Error("native listener unavailable");
+    };
+    boot(deps);
+
+    expect(() => captured.readyCb()).not.toThrow();
+    expect(captured.tray.menus.length).toBeGreaterThan(0);
+    expect(
+      captured.notifications.some(
+        (n) => n.body === "Hotkey listener failed to start — recording is disabled."
+      )
+    ).toBe(true);
   });
 });

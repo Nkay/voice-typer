@@ -23,7 +23,7 @@ boot({
   safeStorage,
   ipcMain,
   Notification,
-  GlobalKeyboardListener,
+  createListener: () => new GlobalKeyboardListener(),
   keyboard,
   Key,
 });

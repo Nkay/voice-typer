@@ -21,7 +21,7 @@ function boot({
   safeStorage,
   ipcMain,
   Notification,
-  GlobalKeyboardListener,
+  createListener,
   keyboard,
   Key,
 }) {
@@ -96,9 +96,14 @@ function boot({
 
     state.hotkey = new Hotkey({
       keyName: state.config.recordKey,
-      createListener: () => new GlobalKeyboardListener(),
+      createListener,
     });
-    state.hotkey.start();
+    try {
+      state.hotkey.start();
+    } catch (err) {
+      console.error("VoiceTyper: hotkey listener failed to start", err);
+      notify("VoiceTyper", "Hotkey listener failed to start — recording is disabled.");
+    }
 
     const typer = createTyper({ keyboard, Key });
 
