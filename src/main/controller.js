@@ -96,7 +96,7 @@ class Controller {
             model: cfg.model,
             language: cfg.language,
           });
-          if (text) await this.typer.typeAndEnter(text);
+          if (text) await this.typer.type(text);
         } catch (err) {
           this._setState("error");
           this.notify("VoiceTyper", this._errorMessage(err));

@@ -1,10 +1,8 @@
-function createTyper({ keyboard, Key }) {
+function createTyper({ keyboard }) {
   return {
-    async typeAndEnter(text) {
+    async type(text) {
       if (!text) return;
       await keyboard.type(text);
-      await keyboard.pressKey(Key.Enter);
-      await keyboard.releaseKey(Key.Enter);
     },
   };
 }

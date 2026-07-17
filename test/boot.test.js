@@ -64,7 +64,6 @@ function fakeDeps() {
     Notification: FakeNotification,
     createListener: () => ({ addListener() {}, kill() {} }),
     keyboard: { config: {} },
-    Key: {},
   };
   return { deps, captured };
 }

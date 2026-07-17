@@ -23,7 +23,6 @@ function boot({
   Notification,
   createListener,
   keyboard,
-  Key,
 }) {
   // Slow the synthetic typing slightly so target apps keep up.
   keyboard.config.autoDelayMs = 2;
@@ -105,7 +104,7 @@ function boot({
       notify("VoiceTyper", "Hotkey listener failed to start — recording is disabled.");
     }
 
-    const typer = createTyper({ keyboard, Key });
+    const typer = createTyper({ keyboard });
 
     state.tray = createTray({
       Tray,
