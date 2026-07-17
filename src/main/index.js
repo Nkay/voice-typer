@@ -9,10 +9,10 @@ const {
   Notification,
 } = require("electron");
 
-const { GlobalKeyboardListener } = require("node-global-key-listener");
 const { keyboard, Key } = require("@nut-tree-fork/nut-js");
 
 const { boot } = require("./boot.js");
+const { createKeyPoller, createWin32KeyState } = require("./keyPoller.js");
 
 boot({
   app,
@@ -23,7 +23,7 @@ boot({
   safeStorage,
   ipcMain,
   Notification,
-  createListener: () => new GlobalKeyboardListener(),
+  createListener: () => createKeyPoller({ getKeyState: createWin32KeyState() }),
   keyboard,
   Key,
 });

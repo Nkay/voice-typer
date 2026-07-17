@@ -8,7 +8,7 @@ files:
   - package.json
   - "!**/*.test.js"
 asarUnpack:
-  - "**/node_modules/node-global-key-listener/**"
+  - "**/node_modules/koffi/**"
   - "**/node_modules/@nut-tree-fork/**"
 win:
   target:
