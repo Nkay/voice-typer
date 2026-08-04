@@ -9,12 +9,17 @@ class Controller {
     this.getConfig = deps.getConfig;
     this.notify = deps.notify;
     this.minDurationMs = deps.minDurationMs != null ? deps.minDurationMs : 200;
+    this.minHoldMs = deps.minHoldMs != null ? deps.minHoldMs : 1000;
+    this.now = deps.now || Date.now;
     this.sampleRate = deps.sampleRate || 16000;
 
     this.paused = false;
     this.recording = false;
     this.working = false;
     this.queue = [];
+    this.pressedAt = 0;
+    // Infinity = no completed press cycle yet; such clips pass the guard.
+    this.lastHoldMs = Infinity;
   }
 
   start() {
@@ -56,6 +61,7 @@ class Controller {
     }
     if (this.recording) return;
     this.recording = true;
+    this.pressedAt = this.now();
     this._setState("recording");
     this.recorder.start();
   }
@@ -63,13 +69,14 @@ class Controller {
   _onStop() {
     if (!this.recording) return;
     this.recording = false;
+    this.lastHoldMs = this.now() - this.pressedAt;
     this.recorder.stop();
   }
 
   _onWav(bytes) {
     const samples = (bytes.length - 44) / 2;
     const durationMs = (samples / this.sampleRate) * 1000;
-    if (durationMs < this.minDurationMs) {
+    if (this.lastHoldMs < this.minHoldMs || durationMs < this.minDurationMs) {
       this._idle();
       return;
     }

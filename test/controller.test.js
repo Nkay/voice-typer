@@ -21,6 +21,7 @@ function harness(overrides = {}) {
   const typed = [];
   const states = [];
   const notifications = [];
+  let nowMs = 0;
   const deps = {
     hotkey,
     recorder,
@@ -31,10 +32,21 @@ function harness(overrides = {}) {
     getConfig: () => ({ model: "voxtral-mini-latest", language: "auto" }),
     notify: (t, b) => notifications.push([t, b]),
     minDurationMs: 200,
+    minHoldMs: 1000,
+    now: () => nowMs,
     sampleRate: 16000,
   };
   const controller = new Controller(deps);
-  return { controller, hotkey, recorder, fireWav: (b) => wavCb(b), typed, states, notifications };
+  return {
+    controller,
+    hotkey,
+    recorder,
+    fireWav: (b) => wavCb(b),
+    typed,
+    states,
+    notifications,
+    advance: (ms) => { nowMs += ms; },
+  };
 }
 
 describe("Controller", () => {
@@ -44,6 +56,7 @@ describe("Controller", () => {
     h.hotkey.emit("record-start");
     expect(h.recorder.started).toBe(1);
     expect(h.states).toContain("recording");
+    h.advance(1200);
     h.hotkey.emit("record-stop");
     expect(h.recorder.stopped).toBe(1);
     h.fireWav(wavOfMs(1000));
@@ -145,5 +158,49 @@ describe("Controller", () => {
     // The first clip's tray update threw; the queue must not deadlock, so
     // the second clip should still be transcribed and typed.
     expect(typed).toContain("ok");
+  });
+
+  it("discards clips when the key was held shorter than minHoldMs", async () => {
+    const h = harness();
+    h.controller.start();
+    h.hotkey.emit("record-start");
+    h.advance(400);
+    h.hotkey.emit("record-stop");
+    // 400ms of audio passes the minDurationMs (200ms) guard — only the
+    // hold guard can discard this clip.
+    h.fireWav(wavOfMs(400));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(h.typed).toEqual([]);
+    expect(h.states).not.toContain("processing");
+    expect(h.states[h.states.length - 1]).toBe("active");
+  });
+
+  it("transcribes when the hold exceeds minHoldMs even if the audio is shorter", async () => {
+    const h = harness();
+    h.controller.start();
+    h.hotkey.emit("record-start");
+    h.advance(1200);
+    h.hotkey.emit("record-stop");
+    // Mic spin-up delays capture: a 1.2s hold produced only 800ms of
+    // audio. Hold length is what counts.
+    h.fireWav(wavOfMs(800));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(h.typed).toEqual(["text"]);
+  });
+
+  it("does not let a short hold discard the next full-length clip", async () => {
+    const h = harness();
+    h.controller.start();
+    h.hotkey.emit("record-start");
+    h.advance(400);
+    h.hotkey.emit("record-stop");
+    h.fireWav(wavOfMs(400));
+    await new Promise((r) => setTimeout(r, 0));
+    h.hotkey.emit("record-start");
+    h.advance(1500);
+    h.hotkey.emit("record-stop");
+    h.fireWav(wavOfMs(1200));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(h.typed).toEqual(["text"]);
   });
 });
