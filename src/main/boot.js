@@ -129,6 +129,7 @@ function boot({
       getConfig: () => state.config,
       notify,
       minDurationMs: 200,
+      minHoldMs: 1000,
       sampleRate: 16000,
     });
     state.controller.start();
