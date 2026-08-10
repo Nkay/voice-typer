@@ -9,6 +9,9 @@ const { createTyper } = require("./typer.js");
 const { createTray } = require("./tray.js");
 const { createRecorderBridge } = require("./recorderBridge.js");
 const { Controller } = require("./controller.js");
+const { summarize } = require("../shared/summarizer.js");
+const { fetchChatModels: defaultFetchChatModels } = require("../shared/models.js");
+const { KEYS } = require("../shared/keys.js");
 
 // All Electron and native-module surfaces are injected so the wiring can be
 // exercised in tests without an Electron runtime.
@@ -23,6 +26,8 @@ function boot({
   Notification,
   createListener,
   keyboard,
+  Key,
+  fetchChatModels = defaultFetchChatModels,
 }) {
   // Slow the synthetic typing slightly so target apps keep up.
   keyboard.config.autoDelayMs = 2;
@@ -32,10 +37,34 @@ function boot({
     return;
   }
 
-  let state = {};
+  let state = { models: null, modelsError: null, modelsPromise: null };
 
   const notify = (title, body) => {
     if (Notification.isSupported()) new Notification({ title, body }).show();
+  };
+
+  // Cached because the Settings window may open repeatedly and the list rarely
+  // changes. A failure is recorded as a message, never thrown: the app must boot
+  // and record without a model list.
+  const refreshModels = async () => {
+    if (!state.secrets || !state.secrets.hasKey()) {
+      state.models = null;
+      state.modelsError = null;
+      return;
+    }
+    try {
+      state.models = await fetchChatModels({ apiKey: state.secrets.getKey() });
+      state.modelsError = null;
+    } catch (err) {
+      state.models = null;
+      state.modelsError = err && err.message ? err.message : "Could not load model list";
+    }
+  };
+
+  const modelsReady = () => {
+    // Join the in-flight fetch rather than starting a second one.
+    if (!state.modelsPromise) state.modelsPromise = refreshModels();
+    return state.modelsPromise;
   };
 
   const createHiddenWindow = () => {
@@ -79,6 +108,10 @@ function boot({
     state.config = configModule.loadConfig(configPath);
     state.secrets = createSecrets({ safeStorage, filePath: keyPath });
 
+    if (state.secrets.hasKey()) {
+      state.modelsPromise = refreshModels();
+    }
+
     app.setLoginItemSettings({ openAtLogin: state.config.autoLaunch });
 
     state.hiddenWin = createHiddenWindow();
@@ -105,7 +138,7 @@ function boot({
       notify("VoiceTyper", "Hotkey listener failed to start — recording is disabled.");
     }
 
-    const typer = createTyper({ keyboard });
+    const typer = createTyper({ keyboard, Key });
 
     state.tray = createTray({
       Tray,
@@ -124,6 +157,7 @@ function boot({
       hotkey: state.hotkey,
       recorder,
       transcribe,
+      summarize,
       typer,
       tray: state.tray,
       getApiKey: () => state.secrets.getKey(),
@@ -140,22 +174,46 @@ function boot({
     }
 
     // --- Settings IPC ---
-    ipcMain.handle("settings:get", () => ({
-      config: state.config,
-      hasKey: state.secrets.hasKey(),
-    }));
+    ipcMain.handle("settings:get", async () => {
+      if (state.secrets.hasKey()) await modelsReady();
+      return {
+        config: state.config,
+        hasKey: state.secrets.hasKey(),
+        keys: KEYS,
+        models: state.models,
+        modelsError: state.modelsError,
+      };
+    });
 
-    ipcMain.handle("settings:save", (_e, { config, apiKey }) => {
-      state.config = configModule.mergeConfig(config);
+    ipcMain.handle("settings:save", async (_e, { config, apiKey }) => {
+      const candidate = configModule.mergeConfig(config);
+      // mergeConfig silently disables an invalid chord; re-check the raw input so
+      // the user is told why rather than finding the chord quietly switched off.
+      const chordError = configModule.summaryKeysError(
+        candidate.recordKey,
+        config && config.summaryKeys
+      );
+      if (chordError) return { ok: false, error: chordError };
+
+      state.config = candidate;
       configModule.saveConfig(configPath, state.config);
-      if (typeof apiKey === "string" && apiKey.length > 0) state.secrets.setKey(apiKey);
+
+      const keyChanged = typeof apiKey === "string" && apiKey.length > 0;
+      if (keyChanged) state.secrets.setKey(apiKey);
+
       app.setLoginItemSettings({ openAtLogin: state.config.autoLaunch });
       state.hotkey.setBindings({
         recordKey: state.config.recordKey,
         summaryKeys: state.config.summaryKeys,
       });
       state.controller.refreshKeyState();
-      return { ok: true };
+
+      if (keyChanged) {
+        state.modelsPromise = refreshModels();
+        await state.modelsPromise;
+      }
+
+      return { ok: true, models: state.models, modelsError: state.modelsError };
     });
   });
 

@@ -9,7 +9,7 @@ const {
   Notification,
 } = require("electron");
 
-const { keyboard } = require("@nut-tree-fork/nut-js");
+const { keyboard, Key } = require("@nut-tree-fork/nut-js");
 
 const { boot } = require("./boot.js");
 const { createKeyPoller, createWin32KeyState } = require("./keyPoller.js");
@@ -25,4 +25,5 @@ boot({
   Notification,
   createListener: (keys) => createKeyPoller({ getKeyState: createWin32KeyState(), keys }),
   keyboard,
+  Key,
 });
