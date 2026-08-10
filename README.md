@@ -19,10 +19,10 @@ the hold upgrades that recording to transcript + summary: release the record key
 and VoiceTyper sends the transcript to a Mistral chat model for a summary, then
 types the transcript, a blank line, and the summary. The modifier is sticky for
 the hold — press it any time before releasing the record key, or release it
-early, and the upgrade still applies — but it does nothing by itself; the record
-key must be held for anything to happen at all. If the summary call fails the
-transcript is still typed and a notification says so — a failed summary never
-costs you your dictation.
+early, and the upgrade still applies — but release it before the text types to
+avoid upper-cased output. It does nothing by itself; the record key must be held
+for anything to happen at all. If the summary call fails the transcript is still
+typed and a notification says so — a failed summary never costs you your dictation.
 
 A tray icon shows the current state (idle, recording, processing, paused, or
 error) and gives you a menu to pause/resume, open Settings, or quit.
