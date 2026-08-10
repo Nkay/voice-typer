@@ -133,7 +133,7 @@ function boot({
 
     state.hotkey = new Hotkey({
       recordKey: state.config.recordKey,
-      summaryKeys: state.config.summaryKeys,
+      summaryModifier: state.config.summaryModifier,
       createListener,
     });
     try {
@@ -192,13 +192,14 @@ function boot({
 
     ipcMain.handle("settings:save", async (_e, { config, apiKey }) => {
       const candidate = configModule.mergeConfig(config);
-      // mergeConfig silently disables an invalid chord; re-check the raw input so
-      // the user is told why rather than finding the chord quietly switched off.
-      const chordError = configModule.summaryKeysError(
+      // mergeConfig silently disables an invalid modifier; re-check the raw
+      // input so the user is told why rather than finding the summary
+      // command quietly switched off.
+      const modifierError = configModule.summaryModifierError(
         candidate.recordKey,
-        config && config.summaryKeys
+        config && config.summaryModifier
       );
-      if (chordError) return { ok: false, error: chordError };
+      if (modifierError) return { ok: false, error: modifierError };
 
       state.config = candidate;
       configModule.saveConfig(configPath, state.config);
@@ -209,7 +210,7 @@ function boot({
       app.setLoginItemSettings({ openAtLogin: state.config.autoLaunch });
       state.hotkey.setBindings({
         recordKey: state.config.recordKey,
-        summaryKeys: state.config.summaryKeys,
+        summaryModifier: state.config.summaryModifier,
       });
       state.controller.refreshKeyState();
 

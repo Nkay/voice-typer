@@ -142,7 +142,7 @@ describe("boot wiring", () => {
     expect(Array.isArray(result.keys)).toBe(true);
     expect(result.keys.some((k) => k.name === "RIGHT ALT")).toBe(true);
     expect(result.keys.some((k) => k.name === "F24")).toBe(true);
-    expect(result.config.summaryKeys).toEqual(["LEFT CTRL", "LEFT SHIFT"]);
+    expect(result.config.summaryModifier).toBe("RIGHT SHIFT");
   });
 
   it("settings:get reports no models and no error when there is no API key", async () => {
@@ -162,13 +162,13 @@ describe("boot wiring", () => {
     expect(fetched).toBe(0);
   });
 
-  it("settings:save rejects a chord that collides with the record key and saves nothing", async () => {
+  it("settings:save rejects a modifier that collides with the record key and saves nothing", async () => {
     const { deps, captured } = fakeDeps();
     boot(deps);
     captured.readyCb();
 
     const result = await captured.handlers["settings:save"](null, {
-      config: { recordKey: "LEFT CTRL", summaryKeys: ["LEFT CTRL", "LEFT SHIFT"] },
+      config: { recordKey: "LEFT CTRL", summaryModifier: "LEFT CTRL" },
       apiKey: "sk-should-not-be-saved",
     });
 
@@ -185,21 +185,37 @@ describe("boot wiring", () => {
     expect(captured.setKeysCalls).toEqual([]);
   });
 
-  it("settings:save accepts a valid chord and reports ok", async () => {
+  it("settings:save accepts a valid modifier and reports ok", async () => {
     const { deps, captured } = fakeDeps();
     boot(deps);
     captured.readyCb();
 
     const result = await captured.handlers["settings:save"](null, {
-      config: { recordKey: "RIGHT ALT", summaryKeys: ["F13", "F14"], separator: "dash" },
+      config: { recordKey: "RIGHT ALT", summaryModifier: "F13", separator: "dash" },
       apiKey: "",
     });
 
     expect(result.ok).toBe(true);
 
     const after = await captured.handlers["settings:get"]();
-    expect(after.config.summaryKeys).toEqual(["F13", "F14"]);
+    expect(after.config.summaryModifier).toBe("F13");
     expect(after.config.separator).toBe("dash");
+  });
+
+  it("settings:save accepts an empty summaryModifier as a deliberate opt-out", async () => {
+    const { deps, captured } = fakeDeps();
+    boot(deps);
+    captured.readyCb();
+
+    const result = await captured.handlers["settings:save"](null, {
+      config: { recordKey: "RIGHT ALT", summaryModifier: "" },
+      apiKey: "",
+    });
+
+    expect(result.ok).toBe(true);
+
+    const after = await captured.handlers["settings:get"]();
+    expect(after.config.summaryModifier).toBe("");
   });
 
   it("settings:save fetches models once a key is supplied", async () => {
@@ -208,7 +224,7 @@ describe("boot wiring", () => {
     captured.readyCb();
 
     const result = await captured.handlers["settings:save"](null, {
-      config: { recordKey: "RIGHT ALT", summaryKeys: ["F13", "F14"] },
+      config: { recordKey: "RIGHT ALT", summaryModifier: "F13" },
       apiKey: "sk-test",
     });
 
@@ -228,7 +244,7 @@ describe("boot wiring", () => {
     captured.readyCb();
 
     const result = await captured.handlers["settings:save"](null, {
-      config: { recordKey: "RIGHT ALT", summaryKeys: ["F13", "F14"] },
+      config: { recordKey: "RIGHT ALT", summaryModifier: "F13" },
       apiKey: "sk-bad",
     });
 
