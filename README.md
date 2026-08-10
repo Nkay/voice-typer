@@ -14,6 +14,12 @@ has focus — no clicking required.
 4. The returned text is typed into the currently focused field via the keyboard
    (no mouse involved).
 
+Holding the **summary chord** instead (Left Ctrl + Left Shift by default) does the
+same, then sends the transcript to a Mistral chat model for a summary and types
+the transcript, a blank line, and the summary. If the summary call fails the
+transcript is still typed and a notification says so — a failed summary never
+costs you your dictation.
+
 A tray icon shows the current state (idle, recording, processing, paused, or
 error) and gives you a menu to pause/resume, open Settings, or quit.
 
@@ -62,12 +68,29 @@ The same Settings window lets you configure:
 
 - **Mistral API key** — leave the field blank to keep the currently saved key.
 - **Language** — `auto` (auto-detect), `de` (German), or `en` (English).
-- **Record key** — the key you hold to record. Defaults to **Right Alt
-  (AltGr)**; can also be set to Left Alt, Right Ctrl, or Left Ctrl.
+- **Record key** — the key you hold for a plain transcript. Defaults to **Right
+  Alt (AltGr)**. Selectable keys are Left/Right Alt, Left/Right Ctrl,
+  Left/Right Shift, F1–F24, and Space.
+- **Summary keys** — the two keys you hold together for transcript + summary.
+  Defaults to **Left Ctrl + Left Shift**. Both must differ from the record key.
+  Set either to *— none —* to disable the chord.
+- **Summary model** — which Mistral chat model writes the summary. The list is
+  fetched from your account, so it reflects the models you actually have access
+  to. Needs a saved API key.
+- **Summary prompt** — the instructions sent to that model. Put style rules or
+  worked examples here.
+- **Separator** — what goes between the transcript and the summary: a blank line
+  (typed as Shift+Enter twice, so it never submits a chat field), an em dash, or
+  two spaces.
 - **Microphone** — which input device to record from (defaults to the system
   default device).
 - **Launch on login** — whether Windows should start VoiceTyper automatically
   when you log in. Off by default.
+
+> **A note on Space and function keys.** VoiceTyper watches keys, it does not
+> intercept them. Binding **Space** means holding it also types spaces into the
+> focused field, and function keys may trigger whatever the focused app uses them
+> for (F1 help, F5 refresh, F12 devtools). The modifier keys are the safe choice.
 
 ## Configuration file
 
@@ -108,6 +131,10 @@ access.
 Transcription requires an active internet connection. Recorded audio is sent
 to Mistral's Voxtral API for processing; VoiceTyper does not transcribe audio
 locally.
+
+The summary command sends the transcript text to Mistral's chat-completions API
+in a second request, so a summarised dictation reaches Mistral twice: once as
+audio, once as text.
 
 ## License
 

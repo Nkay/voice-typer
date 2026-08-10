@@ -11,6 +11,12 @@
       .row input[type="checkbox"] { width: auto; }
       button { margin-top: 20px; padding: 8px 16px; }
       #status { margin-left: 12px; color: #2e7d32; }
+      textarea { width: 100%; padding: 6px; margin-top: 4px; box-sizing: border-box;
+                 font-family: Consolas, monospace; font-size: 12px; resize: vertical; }
+      .pair { display: flex; gap: 8px; }
+      .warn { color: #b26500; font-size: 12px; margin-top: 4px; }
+      .error { color: #c62828; }
+      .hint { color: #666; font-size: 12px; margin-top: 4px; font-weight: 400; }
     </style>
   </head>
   <body>
@@ -25,11 +31,28 @@
       </select>
     </label>
     <label>Record key
-      <select id="recordKey">
-        <option value="RIGHT ALT">Right Alt (AltGr)</option>
-        <option value="LEFT ALT">Left Alt</option>
-        <option value="RIGHT CTRL">Right Ctrl</option>
-        <option value="LEFT CTRL">Left Ctrl</option>
+      <select id="recordKey"></select>
+    </label>
+    <label>Summary keys (hold both)
+      <div class="pair">
+        <select id="summaryKey1"></select>
+        <select id="summaryKey2"></select>
+      </div>
+      <div class="hint">Must differ from the record key. Holding Space also types
+        spaces; some apps claim function keys.</div>
+    </label>
+    <label>Summary model
+      <select id="summaryModel"></select>
+      <div id="modelWarn" class="warn" hidden></div>
+    </label>
+    <label>Summary prompt
+      <textarea id="summaryPrompt" rows="6"></textarea>
+    </label>
+    <label>Separator
+      <select id="separator">
+        <option value="blank-line">Blank line (Shift+Enter twice)</option>
+        <option value="dash">Dash — </option>
+        <option value="spaces">Two spaces</option>
       </select>
     </label>
     <label>Microphone

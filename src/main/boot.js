@@ -87,7 +87,7 @@ function boot({
     }
     state.settingsWin = new BrowserWindow({
       width: 420,
-      height: 380,
+      height: 700,
       resizable: false,
       title: "VoiceTyper Settings",
       webPreferences: {
