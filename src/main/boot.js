@@ -58,6 +58,11 @@ function boot({
     } catch (err) {
       state.models = null;
       state.modelsError = err && err.message ? err.message : "Could not load model list";
+      // Don't memoize a failure forever: any awaiters already hold this promise
+      // object, so clearing the field is safe, and it lets the next
+      // settings:get (or another refreshModels() call) start a fresh attempt
+      // instead of replaying a stale rejection for the rest of the process.
+      state.modelsPromise = null;
     }
   };
 

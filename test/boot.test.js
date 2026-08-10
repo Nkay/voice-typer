@@ -5,7 +5,18 @@ import fs from "fs";
 import { boot } from "../src/main/boot.js";
 
 function fakeDeps() {
-  const captured = { readyCb: null, tray: null, notifications: [], handlers: {} };
+  // Memoized so it returns the SAME directory every time app.getPath("userData")
+  // is called within one boot() — letting a test pre-write a key.enc at a path
+  // it can predict — while still being a fresh, unique directory per test.
+  const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "voicetyper-boot-"));
+  const captured = {
+    readyCb: null,
+    tray: null,
+    notifications: [],
+    handlers: {},
+    userDataDir,
+    setKeysCalls: [],
+  };
 
   class FakeBrowserWindow {
     constructor() {
@@ -47,7 +58,7 @@ function fakeDeps() {
       // callback synchronously and observe a throw instead of an
       // unhandled rejection.
       whenReady: () => ({ then: (cb) => (captured.readyCb = cb) }),
-      getPath: () => fs.mkdtempSync(path.join(os.tmpdir(), "voicetyper-boot-")),
+      getPath: () => userDataDir,
       setLoginItemSettings: () => {},
       on: () => {},
       quit: () => {},
@@ -66,7 +77,11 @@ function fakeDeps() {
       handle: (channel, handler) => (captured.handlers[channel] = handler),
     },
     Notification: FakeNotification,
-    createListener: () => ({ addListener() {}, setKeys() {}, kill() {} }),
+    createListener: () => ({
+      addListener() {},
+      setKeys: (names) => captured.setKeysCalls.push(names),
+      kill() {},
+    }),
     keyboard: { config: {} },
     Key: { LeftShift: "LeftShift", Enter: "Enter" },
     fetchChatModels: async () => ["mistral-large-latest", "mistral-small-latest"],
@@ -147,14 +162,14 @@ describe("boot wiring", () => {
     expect(fetched).toBe(0);
   });
 
-  it("settings:save rejects a chord that collides with the record key without saving", async () => {
+  it("settings:save rejects a chord that collides with the record key and saves nothing", async () => {
     const { deps, captured } = fakeDeps();
     boot(deps);
     captured.readyCb();
 
     const result = await captured.handlers["settings:save"](null, {
       config: { recordKey: "LEFT CTRL", summaryKeys: ["LEFT CTRL", "LEFT SHIFT"] },
-      apiKey: "",
+      apiKey: "sk-should-not-be-saved",
     });
 
     expect(result.ok).toBe(false);
@@ -162,6 +177,12 @@ describe("boot wiring", () => {
 
     const after = await captured.handlers["settings:get"]();
     expect(after.config.recordKey).toBe("RIGHT ALT");
+
+    // "Saves nothing" means all the way down: no config file, no persisted
+    // API key, and the hotkey listener was never re-targeted.
+    expect(fs.existsSync(path.join(captured.userDataDir, "config.json"))).toBe(false);
+    expect(fs.existsSync(path.join(captured.userDataDir, "key.enc"))).toBe(false);
+    expect(captured.setKeysCalls).toEqual([]);
   });
 
   it("settings:save accepts a valid chord and reports ok", async () => {
@@ -214,5 +235,61 @@ describe("boot wiring", () => {
     expect(result.ok).toBe(true);
     expect(result.models).toBeNull();
     expect(result.modelsError).toMatch(/Invalid Mistral API key/);
+  });
+
+  it("fetches models once at startup when a key already exists, and settings:get joins the in-flight fetch instead of starting a second one", async () => {
+    const { deps, captured } = fakeDeps();
+    // A key.enc written exactly as secrets.js/setKey + the fake safeStorage
+    // would produce it, so secrets.hasKey() is true when boot runs.
+    fs.writeFileSync(path.join(captured.userDataDir, "key.enc"), Buffer.from("test-api-key"));
+
+    let fetchCalls = 0;
+    let resolveFetch;
+    deps.fetchChatModels = () => {
+      fetchCalls++;
+      return new Promise((resolve) => {
+        resolveFetch = resolve;
+      });
+    };
+
+    boot(deps);
+    captured.readyCb();
+    expect(fetchCalls).toBe(1);
+
+    // settings:get fires while the startup fetch is still pending.
+    const pending = captured.handlers["settings:get"]();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(fetchCalls).toBe(1); // joined, not duplicated
+
+    resolveFetch(["mistral-large-latest", "mistral-small-latest"]);
+    const result = await pending;
+
+    expect(fetchCalls).toBe(1);
+    expect(result.models).toEqual(["mistral-large-latest", "mistral-small-latest"]);
+    expect(result.modelsError).toBeNull();
+  });
+
+  it("does not let a failed startup fetch poison later attempts (Fix 1 regression)", async () => {
+    const { deps, captured } = fakeDeps();
+    fs.writeFileSync(path.join(captured.userDataDir, "key.enc"), Buffer.from("test-api-key"));
+
+    let calls = 0;
+    deps.fetchChatModels = async () => {
+      calls++;
+      if (calls === 1) throw new Error("offline at launch");
+      return ["mistral-large-latest"];
+    };
+
+    boot(deps);
+    captured.readyCb();
+    // Let the startup fetch's rejection be observed and the memo cleared.
+    await new Promise((r) => setTimeout(r, 0));
+
+    const result = await captured.handlers["settings:get"]();
+
+    expect(calls).toBe(2);
+    expect(result.models).toEqual(["mistral-large-latest"]);
+    expect(result.modelsError).toBeNull();
   });
 });
