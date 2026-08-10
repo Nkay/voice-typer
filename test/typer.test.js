@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { createTyper } from "../src/main/typer.js";
 
-const Key = { LeftShift: "LeftShift", Enter: "Enter" };
+const Key = { LeftShift: "LeftShift", Return: "Return" };
 
 function fakeKeyboard() {
   const calls = [];
@@ -32,6 +32,56 @@ describe("typer", () => {
     await typer.type("");
     expect(f.calls).toEqual([]);
   });
+
+  it("still produces exactly one keyboard.type call for single-line text", async () => {
+    const { f, typer } = make();
+    await typer.type("hello world");
+    expect(f.calls).toEqual([["type", "hello world"]]);
+  });
+
+  it("turns an embedded newline into a soft newline instead of a raw \\n", async () => {
+    const { f, typer } = make();
+    await typer.type("line one\nline two");
+    expect(f.calls).toEqual([
+      ["type", "line one"],
+      ["press", "LeftShift", "Return"],
+      ["release", "LeftShift", "Return"],
+      ["type", "line two"],
+    ]);
+  });
+
+  it("turns a double newline into two soft-newline pairs", async () => {
+    const { f, typer } = make();
+    await typer.type("a\n\nb");
+    expect(f.calls).toEqual([
+      ["type", "a"],
+      ["press", "LeftShift", "Return"],
+      ["release", "LeftShift", "Return"],
+      ["press", "LeftShift", "Return"],
+      ["release", "LeftShift", "Return"],
+      ["type", "b"],
+    ]);
+  });
+
+  it("does not emit a stray empty type call for a trailing newline", async () => {
+    const { f, typer } = make();
+    await typer.type("only line\n");
+    expect(f.calls).toEqual([
+      ["type", "only line"],
+      ["press", "LeftShift", "Return"],
+      ["release", "LeftShift", "Return"],
+    ]);
+  });
+
+  it("never hands keyboard.type a value containing a raw newline", async () => {
+    const { f, typer } = make();
+    await typer.type("a\nb\r\nc\rd\n\ne");
+    const typed = f.calls.filter((c) => c[0] === "type").map((c) => c[1]);
+    expect(typed.length).toBeGreaterThan(0);
+    for (const t of typed) {
+      expect(t).not.toMatch(/\r|\n/);
+    }
+  });
 });
 
 describe("typer.typeParts", () => {
@@ -40,10 +90,10 @@ describe("typer.typeParts", () => {
     await typer.typeParts(["transcript", "summary"]);
     expect(f.calls).toEqual([
       ["type", "transcript"],
-      ["press", "LeftShift", "Enter"],
-      ["release", "LeftShift", "Enter"],
-      ["press", "LeftShift", "Enter"],
-      ["release", "LeftShift", "Enter"],
+      ["press", "LeftShift", "Return"],
+      ["release", "LeftShift", "Return"],
+      ["press", "LeftShift", "Return"],
+      ["release", "LeftShift", "Return"],
       ["type", "summary"],
     ]);
   });
@@ -72,10 +122,10 @@ describe("typer.typeParts", () => {
     await typer.typeParts(["a", "b"], "pipe");
     expect(f.calls).toEqual([
       ["type", "a"],
-      ["press", "LeftShift", "Enter"],
-      ["release", "LeftShift", "Enter"],
-      ["press", "LeftShift", "Enter"],
-      ["release", "LeftShift", "Enter"],
+      ["press", "LeftShift", "Return"],
+      ["release", "LeftShift", "Return"],
+      ["press", "LeftShift", "Return"],
+      ["release", "LeftShift", "Return"],
       ["type", "b"],
     ]);
   });
@@ -123,10 +173,10 @@ describe("typer.typeParts", () => {
     await typer.typeParts(["a", "b"], "constructor");
     expect(f.calls).toEqual([
       ["type", "a"],
-      ["press", "LeftShift", "Enter"],
-      ["release", "LeftShift", "Enter"],
-      ["press", "LeftShift", "Enter"],
-      ["release", "LeftShift", "Enter"],
+      ["press", "LeftShift", "Return"],
+      ["release", "LeftShift", "Return"],
+      ["press", "LeftShift", "Return"],
+      ["release", "LeftShift", "Return"],
       ["type", "b"],
     ]);
   });
@@ -136,10 +186,10 @@ describe("typer.typeParts", () => {
     await typer.typeParts(["a", "b"], "__proto__");
     expect(f.calls).toEqual([
       ["type", "a"],
-      ["press", "LeftShift", "Enter"],
-      ["release", "LeftShift", "Enter"],
-      ["press", "LeftShift", "Enter"],
-      ["release", "LeftShift", "Enter"],
+      ["press", "LeftShift", "Return"],
+      ["release", "LeftShift", "Return"],
+      ["press", "LeftShift", "Return"],
+      ["release", "LeftShift", "Return"],
       ["type", "b"],
     ]);
   });
@@ -149,10 +199,10 @@ describe("typer.typeParts", () => {
     await typer.typeParts(["a", "b"], "toString");
     expect(f.calls).toEqual([
       ["type", "a"],
-      ["press", "LeftShift", "Enter"],
-      ["release", "LeftShift", "Enter"],
-      ["press", "LeftShift", "Enter"],
-      ["release", "LeftShift", "Enter"],
+      ["press", "LeftShift", "Return"],
+      ["release", "LeftShift", "Return"],
+      ["press", "LeftShift", "Return"],
+      ["release", "LeftShift", "Return"],
       ["type", "b"],
     ]);
   });
