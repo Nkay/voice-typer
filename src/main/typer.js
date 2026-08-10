@@ -23,7 +23,7 @@ function createTyper({ keyboard, Key }) {
       if (usable.length === 0) return;
 
       const joiner = JOINERS[separator];
-      if (joiner !== undefined) {
+      if (typeof joiner === "string") {
         await type(usable.join(joiner));
         return;
       }

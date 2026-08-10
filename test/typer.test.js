@@ -103,4 +103,57 @@ describe("typer.typeParts", () => {
     await typer.typeParts(undefined);
     expect(f.calls).toEqual([]);
   });
+
+  it("emits exactly N-1 separators for N parts", async () => {
+    const { f, typer } = make();
+    await typer.typeParts(["a", "b", "c"]);
+    const separators = f.calls.filter((c) => c[0] === "press").length;
+    expect(separators).toBe(4); // Two Shift+Enter pairs (press/release) between a-b and b-c
+  });
+
+  it("never types a raw newline in unknown-separator fallback", async () => {
+    const { f, typer } = make();
+    await typer.typeParts(["a", "b"], "pipe");
+    const typed = f.calls.filter((c) => c[0] === "type").map((c) => c[1]);
+    expect(typed.some((t) => t.includes("\n"))).toBe(false);
+  });
+
+  it("rejects inherited properties: constructor falls back to blank-line", async () => {
+    const { f, typer } = make();
+    await typer.typeParts(["a", "b"], "constructor");
+    expect(f.calls).toEqual([
+      ["type", "a"],
+      ["press", "LeftShift", "Enter"],
+      ["release", "LeftShift", "Enter"],
+      ["press", "LeftShift", "Enter"],
+      ["release", "LeftShift", "Enter"],
+      ["type", "b"],
+    ]);
+  });
+
+  it("rejects inherited properties: __proto__ falls back to blank-line", async () => {
+    const { f, typer } = make();
+    await typer.typeParts(["a", "b"], "__proto__");
+    expect(f.calls).toEqual([
+      ["type", "a"],
+      ["press", "LeftShift", "Enter"],
+      ["release", "LeftShift", "Enter"],
+      ["press", "LeftShift", "Enter"],
+      ["release", "LeftShift", "Enter"],
+      ["type", "b"],
+    ]);
+  });
+
+  it("rejects inherited properties: toString falls back to blank-line", async () => {
+    const { f, typer } = make();
+    await typer.typeParts(["a", "b"], "toString");
+    expect(f.calls).toEqual([
+      ["type", "a"],
+      ["press", "LeftShift", "Enter"],
+      ["release", "LeftShift", "Enter"],
+      ["press", "LeftShift", "Enter"],
+      ["release", "LeftShift", "Enter"],
+      ["type", "b"],
+    ]);
+  });
 });
