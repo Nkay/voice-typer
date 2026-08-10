@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
-import { createKeyPoller, KEY_VCODES } from "../src/main/keyPoller.js";
-import { RECORD_KEYS } from "../src/shared/config.js";
+import { createKeyPoller } from "../src/main/keyPoller.js";
+import { KEY_NAMES, vkFor } from "../src/shared/keys.js";
 
 const VK = { "RIGHT ALT": 0xa5, "LEFT ALT": 0xa4, "RIGHT CTRL": 0xa3, "LEFT CTRL": 0xa2 };
 
@@ -76,18 +76,6 @@ describe("createKeyPoller", () => {
     expect(h.capturedMs()).toBe(30);
   });
 
-  it("covers exactly the keys offered in the settings dropdown", () => {
-    expect(Object.keys(KEY_VCODES)).toEqual(["RIGHT ALT", "LEFT ALT", "RIGHT CTRL", "LEFT CTRL"]);
-    expect(KEY_VCODES["RIGHT ALT"]).toBe(0xa5);
-    expect(KEY_VCODES["LEFT ALT"]).toBe(0xa4);
-    expect(KEY_VCODES["RIGHT CTRL"]).toBe(0xa3);
-    expect(KEY_VCODES["LEFT CTRL"]).toBe(0xa2);
-  });
-
-  it("stays in lockstep with config.js's RECORD_KEYS whitelist", () => {
-    expect(Object.keys(KEY_VCODES)).toEqual(RECORD_KEYS);
-  });
-
   it("delivers an event to every registered listener", () => {
     const h = harness();
     const events2 = [];
@@ -134,5 +122,80 @@ describe("createKeyPoller", () => {
     ]);
 
     consoleError.mockRestore();
+  });
+
+  it("polls only the watched keys", () => {
+    const polled = [];
+    const h = harness({ keys: ["LEFT CTRL", "LEFT SHIFT"], getKeyState: (vk) => {
+      polled.push(vk);
+      return false;
+    } });
+    h.tick();
+    expect(polled.sort()).toEqual([vkFor("LEFT SHIFT"), vkFor("LEFT CTRL")].sort());
+  });
+
+  it("emits nothing for a key outside the watch list", () => {
+    const h = harness({ keys: ["LEFT CTRL"] });
+    h.pressed.add(VK["RIGHT ALT"]);
+    h.tick();
+    expect(h.events).toEqual([]);
+  });
+
+  it("defaults to watching the whole catalog", () => {
+    const polled = [];
+    const h = harness({ getKeyState: (vk) => {
+      polled.push(vk);
+      return false;
+    } });
+    h.tick();
+    expect(polled.length).toBe(KEY_NAMES.length);
+  });
+
+  it("setKeys re-targets which keys are polled", () => {
+    const h = harness({ keys: ["LEFT CTRL"] });
+    h.poller.setKeys(["RIGHT ALT"]);
+    h.pressed.add(VK["RIGHT ALT"]);
+    h.tick();
+    expect(h.events).toEqual([{ name: "RIGHT ALT", state: "DOWN" }]);
+
+    h.pressed.add(VK["LEFT CTRL"]);
+    h.tick();
+    expect(h.events).toEqual([{ name: "RIGHT ALT", state: "DOWN" }]);
+  });
+
+  it("setKeys drops the down-state of removed keys without emitting UP", () => {
+    const h = harness({ keys: ["LEFT CTRL"] });
+    h.pressed.add(VK["LEFT CTRL"]);
+    h.tick();
+    expect(h.events).toEqual([{ name: "LEFT CTRL", state: "DOWN" }]);
+
+    h.poller.setKeys(["RIGHT ALT"]);
+    h.pressed.delete(VK["LEFT CTRL"]);
+    h.tick();
+    expect(h.events).toEqual([{ name: "LEFT CTRL", state: "DOWN" }]);
+  });
+
+  it("ignores unknown key names and de-duplicates repeats", () => {
+    const polled = [];
+    const h = harness({ keys: ["LEFT CTRL", "NOT A KEY", "LEFT CTRL"], getKeyState: (vk) => {
+      polled.push(vk);
+      return false;
+    } });
+    h.tick();
+    expect(polled).toEqual([vkFor("LEFT CTRL")]);
+  });
+
+  it("re-emits DOWN after a key is removed from and returned to the watch list", () => {
+    const h = harness({ keys: ["LEFT CTRL"] });
+    h.pressed.add(VK["LEFT CTRL"]);
+    h.tick();
+    h.poller.setKeys(["RIGHT ALT"]);
+    h.tick();
+    h.poller.setKeys(["LEFT CTRL"]);
+    h.tick();
+    expect(h.events).toEqual([
+      { name: "LEFT CTRL", state: "DOWN" },
+      { name: "LEFT CTRL", state: "DOWN" },
+    ]);
   });
 });

@@ -1,26 +1,35 @@
-// Values must match the settings dropdown (src/settings/settings.html).
-const KEY_VCODES = {
-  "RIGHT ALT": 0xa5, // VK_RMENU
-  "LEFT ALT": 0xa4, // VK_LMENU
-  "RIGHT CTRL": 0xa3, // VK_RCONTROL
-  "LEFT CTRL": 0xa2, // VK_LCONTROL
-};
+const { KEY_NAMES, vkFor } = require("../shared/keys.js");
 
-// Emits the same { name, state: "DOWN"|"UP" } events and addListener/kill
-// surface as node-global-key-listener's GlobalKeyboardListener, so Hotkey
-// consumes it unchanged. Polling GetAsyncKeyState installs no keyboard
-// hook and spawns no helper process — nothing for AV heuristics to flag.
 function createKeyPoller({
   getKeyState,
+  keys = KEY_NAMES,
   intervalMs = 30,
   timers = { setInterval, clearInterval },
 }) {
   const listeners = [];
-  const down = {};
-  for (const name of Object.keys(KEY_VCODES)) down[name] = false;
+  let watched = [];
+  let down = {};
+
+  // Resets down-state: a key leaving the watch list emits no UP, and a key
+  // returning while still held emits a fresh DOWN. Hotkey.setBindings clears its
+  // own state at the same moment, so no stale hold survives a rebinding.
+  const setKeys = (names) => {
+    watched = [];
+    down = {};
+    for (const name of Array.isArray(names) ? names : []) {
+      const vk = vkFor(name);
+      if (vk === undefined) continue;
+      const upper = name.toUpperCase();
+      if (upper in down) continue;
+      watched.push({ name: upper, vk });
+      down[upper] = false;
+    }
+  };
+
+  setKeys(keys);
 
   const tick = () => {
-    for (const [name, vk] of Object.entries(KEY_VCODES)) {
+    for (const { name, vk } of watched) {
       const isDown = Boolean(getKeyState(vk));
       if (isDown === down[name]) continue;
       down[name] = isDown;
@@ -41,6 +50,7 @@ function createKeyPoller({
     addListener(cb) {
       listeners.push(cb);
     },
+    setKeys,
     kill() {
       timers.clearInterval(timer);
     },
@@ -56,4 +66,4 @@ function createWin32KeyState() {
   return (vk) => (GetAsyncKeyState(vk) & 0x8000) !== 0;
 }
 
-module.exports = { createKeyPoller, createWin32KeyState, KEY_VCODES };
+module.exports = { createKeyPoller, createWin32KeyState };
