@@ -23,6 +23,6 @@ boot({
   safeStorage,
   ipcMain,
   Notification,
-  createListener: () => createKeyPoller({ getKeyState: createWin32KeyState() }),
+  createListener: (keys) => createKeyPoller({ getKeyState: createWin32KeyState(), keys }),
   keyboard,
 });

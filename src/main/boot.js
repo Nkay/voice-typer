@@ -94,7 +94,8 @@ function boot({
     );
 
     state.hotkey = new Hotkey({
-      keyName: state.config.recordKey,
+      recordKey: state.config.recordKey,
+      summaryKeys: state.config.summaryKeys,
       createListener,
     });
     try {
@@ -149,7 +150,10 @@ function boot({
       configModule.saveConfig(configPath, state.config);
       if (typeof apiKey === "string" && apiKey.length > 0) state.secrets.setKey(apiKey);
       app.setLoginItemSettings({ openAtLogin: state.config.autoLaunch });
-      state.hotkey.setKey(state.config.recordKey);
+      state.hotkey.setBindings({
+        recordKey: state.config.recordKey,
+        summaryKeys: state.config.summaryKeys,
+      });
       state.controller.refreshKeyState();
       return { ok: true };
     });
