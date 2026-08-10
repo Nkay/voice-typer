@@ -56,7 +56,7 @@ class Hotkey extends EventEmitter {
   _startIfIdle() {
     if (this.recording) return; // auto-repeat DOWN while already recording
     this.recording = true;
-    this.sticky = Boolean(this.summaryModifier) && this.downKeys.has(this.summaryModifier);
+    this.sticky = this.downKeys.has(this.summaryModifier);
     this.emit("record-start");
   }
 

@@ -67,9 +67,7 @@ function validateConfig(config) {
   // record key.
   c.summaryModifier = summaryModifierError(c.recordKey, c.summaryModifier)
     ? ""
-    : typeof c.summaryModifier === "string"
-      ? c.summaryModifier.toUpperCase()
-      : "";
+    : c.summaryModifier.toUpperCase();
   c.summaryModel = nonEmptyString(c.summaryModel, DEFAULTS.summaryModel);
   // Not trimmed: a custom prompt may end in a meaningful newline.
   c.summaryPrompt =
