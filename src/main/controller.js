@@ -22,6 +22,11 @@ class Controller {
     // Infinity = no completed press cycle yet; such clips pass the guard.
     this.lastHoldMs = Infinity;
     this.mode = "transcript";
+    // Mode captured at record-stop time, one entry per stopped recording, FIFO.
+    // handlePcm delivers WAVs in order, so consuming this in the same order
+    // keeps a queued clip tied to the mode it was actually recorded in even if
+    // a new record-start changes `this.mode` before its WAV arrives.
+    this.modeQueue = [];
   }
 
   start() {
@@ -73,17 +78,21 @@ class Controller {
     if (!this.recording) return;
     this.recording = false;
     this.lastHoldMs = this.now() - this.pressedAt;
+    this.modeQueue.push(this.mode);
     this.recorder.stop();
   }
 
   _onWav(bytes) {
+    // Fall back to the live mode if nothing was queued (e.g. a WAV fired
+    // directly without a matching record-stop, as some tests do).
+    const mode = this.modeQueue.length > 0 ? this.modeQueue.shift() : this.mode;
     const samples = (bytes.length - 44) / 2;
     const durationMs = (samples / this.sampleRate) * 1000;
     if (this.lastHoldMs < this.minHoldMs || durationMs < this.minDurationMs) {
       this._idle();
       return;
     }
-    this.queue.push({ bytes, mode: this.mode });
+    this.queue.push({ bytes, mode });
     // _pump() is fire-and-forget here; its own try/finally already resets
     // `working` on any failure, but a synchronous throw from _setState
     // (e.g. tray.setState) would otherwise escape as an unhandled
@@ -123,25 +132,43 @@ class Controller {
   // recording itself succeeded.
   async _typeResult(text, mode, cfg) {
     if (mode !== "summary") {
-      await this.typer.type(text);
+      await this._safeType(() => this.typer.type(text));
       return;
     }
 
     let summary;
     try {
+      // Nothing is typed until this settles, so a stalled endpoint must not
+      // delay the transcript the way its own retry-happy defaults would: cap
+      // the wait and don't retry. The transcript already exists regardless.
       summary = await this.summarize(text, {
         apiKey: this.getApiKey(),
         model: cfg.summaryModel,
         prompt: cfg.summaryPrompt,
+        timeoutMs: 10000,
+        maxAttempts: 1,
       });
     } catch (err) {
       console.error("VoiceTyper: summarization failed", err);
       this.notify("VoiceTyper", "Summary failed — typed transcript only");
-      await this.typer.type(text);
+      await this._safeType(() => this.typer.type(text));
       return;
     }
 
-    await this.typer.typeParts([text, summary], cfg.separator);
+    await this._safeType(() => this.typer.typeParts([text, summary], cfg.separator));
+  }
+
+  // Typing happens after transcription (and, in summary mode, summarization)
+  // has already succeeded, so a keystroke-synthesis failure here is a distinct
+  // failure mode: it must not be reported as "Transcription failed" and must
+  // not redden the tray, since transcription itself worked fine.
+  async _safeType(fn) {
+    try {
+      await fn();
+    } catch (err) {
+      console.error("VoiceTyper: typing failed", err);
+      this.notify("VoiceTyper", "Typing failed");
+    }
   }
 
   _errorMessage(err) {

@@ -27,7 +27,7 @@ function harness(overrides = {}) {
     recorder,
     transcribe: overrides.transcribe || (async () => "text"),
     summarize: overrides.summarize || (async () => "summary"),
-    typer: {
+    typer: overrides.typer || {
       type: async (t) => typed.push(t),
       typeParts: async (parts, separator) => typed.push({ parts, separator }),
     },
@@ -350,5 +350,90 @@ describe("Controller", () => {
     expect(called).toBe(0);
     expect(h.typed).toEqual([]);
     expect(h.notifications).toEqual([]);
+  });
+
+  it("reports a typing failure as 'Typing failed', not transcription failure, and does not redden the tray", async () => {
+    const typeErr = new Error("keyboard busy");
+    const h = harness({
+      typer: {
+        type: async () => {
+          throw typeErr;
+        },
+        typeParts: async () => {
+          throw typeErr;
+        },
+      },
+    });
+    h.controller.start();
+    h.fireWav(wavOfMs(1000));
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(h.notifications).toEqual([["VoiceTyper", "Typing failed"]]);
+    expect(h.states).not.toContain("error");
+    expect(h.states[h.states.length - 1]).toBe("active");
+  });
+
+  it("reports a typing failure in summary mode the same way", async () => {
+    const h = harness({
+      typer: {
+        type: async () => {},
+        typeParts: async () => {
+          throw new Error("keyboard busy");
+        },
+      },
+    });
+    h.controller.start();
+    h.hotkey.emit("record-start", { mode: "summary" });
+    h.advance(1200);
+    h.hotkey.emit("record-stop");
+    h.fireWav(wavOfMs(1000));
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(h.notifications).toEqual([["VoiceTyper", "Typing failed"]]);
+    expect(h.states).not.toContain("error");
+  });
+
+  it("caps the summary call's timeout and disables its retries so the transcript is not delayed", async () => {
+    let captured;
+    const summarize = async (text, opts) => {
+      captured = opts;
+      return "the summary";
+    };
+    const h = harness({ summarize });
+    h.controller.start();
+    h.hotkey.emit("record-start", { mode: "summary" });
+    h.advance(1200);
+    h.hotkey.emit("record-stop");
+    h.fireWav(wavOfMs(1000));
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(captured.timeoutMs).toBe(10000);
+    expect(captured.maxAttempts).toBe(1);
+  });
+
+  it("captures mode at record-stop, not when the WAV arrives, so a race with a new recording can't relabel a queued clip", async () => {
+    const h = harness();
+    h.controller.start();
+
+    h.hotkey.emit("record-start", { mode: "summary" });
+    h.advance(1200);
+    h.hotkey.emit("record-stop"); // mode captured as "summary" here
+
+    // A new recording starts (and changes this.mode) before the first clip's
+    // WAV arrives — the narrow window Fix 8 closes.
+    h.hotkey.emit("record-start", { mode: "transcript" });
+    h.advance(1200);
+    h.hotkey.emit("record-stop");
+
+    h.fireWav(wavOfMs(1000)); // from the summary hold
+    h.fireWav(wavOfMs(1000)); // from the transcript hold
+
+    await new Promise((r) => setTimeout(r, 0));
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(h.typed).toEqual([
+      { parts: ["text", "summary"], separator: "blank-line" },
+      "text",
+    ]);
   });
 });
