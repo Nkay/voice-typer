@@ -21,17 +21,20 @@ class Controller {
     this.pressedAt = 0;
     // Infinity = no completed press cycle yet; such clips pass the guard.
     this.lastHoldMs = Infinity;
-    this.mode = "transcript";
-    // Mode captured at record-stop time, one entry per stopped recording, FIFO.
-    // handlePcm delivers WAVs in order, so consuming this in the same order
-    // keeps a queued clip tied to the mode it was actually recorded in even if
-    // a new record-start changes `this.mode` before its WAV arrives.
-    this.modeQueue = [];
+    // Mode of the most recently stopped recording, captured at record-stop
+    // time. A single slot, not a queue: recordings are serialised (_onStart
+    // returns early while already recording) and stop -> handlePcm is a
+    // sub-5ms IPC round trip while a fresh hold takes at least a second, so a
+    // second stop cannot realistically land before the pending WAV. If a WAV
+    // is lost entirely (e.g. getUserMedia rejected, so capture:pcm never
+    // arrives), this leaves one stale value that the next record-stop simply
+    // overwrites — harmless, unlike a FIFO queue permanently desyncing.
+    this.pendingMode = "transcript";
   }
 
   start() {
-    this.hotkey.on("record-start", (payload) => this._onStart(payload));
-    this.hotkey.on("record-stop", () => this._onStop());
+    this.hotkey.on("record-start", () => this._onStart());
+    this.hotkey.on("record-stop", (payload) => this._onStop(payload));
     this.recorder.onWav((bytes) => this._onWav(bytes));
     this._idle();
   }
@@ -59,7 +62,7 @@ class Controller {
     this.tray.setState(state);
   }
 
-  _onStart(payload) {
+  _onStart() {
     if (this.paused) return;
     if (!this.getApiKey()) {
       this.notify("VoiceTyper", "Set your Mistral API key in Settings");
@@ -69,23 +72,20 @@ class Controller {
     if (this.recording) return;
     this.recording = true;
     this.pressedAt = this.now();
-    this.mode = payload && payload.mode === "summary" ? "summary" : "transcript";
     this._setState("recording");
     this.recorder.start();
   }
 
-  _onStop() {
+  _onStop(payload) {
     if (!this.recording) return;
     this.recording = false;
     this.lastHoldMs = this.now() - this.pressedAt;
-    this.modeQueue.push(this.mode);
+    this.pendingMode = payload && payload.mode === "summary" ? "summary" : "transcript";
     this.recorder.stop();
   }
 
   _onWav(bytes) {
-    // Fall back to the live mode if nothing was queued (e.g. a WAV fired
-    // directly without a matching record-stop, as some tests do).
-    const mode = this.modeQueue.length > 0 ? this.modeQueue.shift() : this.mode;
+    const mode = this.pendingMode;
     const samples = (bytes.length - 44) / 2;
     const durationMs = (samples / this.sampleRate) * 1000;
     if (this.lastHoldMs < this.minHoldMs || durationMs < this.minDurationMs) {

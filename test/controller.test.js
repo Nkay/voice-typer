@@ -217,7 +217,7 @@ describe("Controller", () => {
     expect(h.typed).toEqual(["text"]);
   });
 
-  it("types transcript then summary when started in summary mode", async () => {
+  it("types transcript then summary when the stop reports summary mode", async () => {
     let captured;
     const summarize = async (text, opts) => {
       captured = { text, opts };
@@ -225,9 +225,9 @@ describe("Controller", () => {
     };
     const h = harness({ summarize });
     h.controller.start();
-    h.hotkey.emit("record-start", { mode: "summary" });
+    h.hotkey.emit("record-start");
     h.advance(1200);
-    h.hotkey.emit("record-stop");
+    h.hotkey.emit("record-stop", { mode: "summary" });
     h.fireWav(wavOfMs(1000));
     await new Promise((r) => setTimeout(r, 0));
 
@@ -250,9 +250,9 @@ describe("Controller", () => {
       }),
     });
     h.controller.start();
-    h.hotkey.emit("record-start", { mode: "summary" });
+    h.hotkey.emit("record-start");
     h.advance(1200);
-    h.hotkey.emit("record-stop");
+    h.hotkey.emit("record-stop", { mode: "summary" });
     h.fireWav(wavOfMs(1000));
     await new Promise((r) => setTimeout(r, 0));
 
@@ -266,9 +266,9 @@ describe("Controller", () => {
       },
     });
     h.controller.start();
-    h.hotkey.emit("record-start", { mode: "summary" });
+    h.hotkey.emit("record-start");
     h.advance(1200);
-    h.hotkey.emit("record-stop");
+    h.hotkey.emit("record-stop", { mode: "summary" });
     h.fireWav(wavOfMs(1000));
     await new Promise((r) => setTimeout(r, 0));
 
@@ -287,9 +287,9 @@ describe("Controller", () => {
       },
     });
     h.controller.start();
-    h.hotkey.emit("record-start", { mode: "transcript" });
+    h.hotkey.emit("record-start");
     h.advance(1200);
-    h.hotkey.emit("record-stop");
+    h.hotkey.emit("record-stop", { mode: "transcript" });
     h.fireWav(wavOfMs(1000));
     await new Promise((r) => setTimeout(r, 0));
 
@@ -297,7 +297,7 @@ describe("Controller", () => {
     expect(h.typed).toEqual(["text"]);
   });
 
-  it("treats a record-start with no payload as transcript mode", async () => {
+  it("treats an absent record-stop payload as transcript mode", async () => {
     const h = harness();
     h.controller.start();
     h.hotkey.emit("record-start");
@@ -308,18 +308,18 @@ describe("Controller", () => {
     expect(h.typed).toEqual(["text"]);
   });
 
-  it("keeps each queued clip's own mode", async () => {
+  it("keeps each recording's own mode across back-to-back holds", async () => {
     const h = harness();
     h.controller.start();
 
-    h.hotkey.emit("record-start", { mode: "summary" });
+    h.hotkey.emit("record-start");
     h.advance(1200);
-    h.hotkey.emit("record-stop");
+    h.hotkey.emit("record-stop", { mode: "summary" });
     h.fireWav(wavOfMs(1000));
 
-    h.hotkey.emit("record-start", { mode: "transcript" });
+    h.hotkey.emit("record-start");
     h.advance(1200);
-    h.hotkey.emit("record-stop");
+    h.hotkey.emit("record-stop", { mode: "transcript" });
     h.fireWav(wavOfMs(1000));
 
     await new Promise((r) => setTimeout(r, 0));
@@ -341,9 +341,9 @@ describe("Controller", () => {
       },
     });
     h.controller.start();
-    h.hotkey.emit("record-start", { mode: "summary" });
+    h.hotkey.emit("record-start");
     h.advance(1200);
-    h.hotkey.emit("record-stop");
+    h.hotkey.emit("record-stop", { mode: "summary" });
     h.fireWav(wavOfMs(1000));
     await new Promise((r) => setTimeout(r, 0));
 
@@ -383,9 +383,9 @@ describe("Controller", () => {
       },
     });
     h.controller.start();
-    h.hotkey.emit("record-start", { mode: "summary" });
+    h.hotkey.emit("record-start");
     h.advance(1200);
-    h.hotkey.emit("record-stop");
+    h.hotkey.emit("record-stop", { mode: "summary" });
     h.fireWav(wavOfMs(1000));
     await new Promise((r) => setTimeout(r, 0));
 
@@ -401,9 +401,9 @@ describe("Controller", () => {
     };
     const h = harness({ summarize });
     h.controller.start();
-    h.hotkey.emit("record-start", { mode: "summary" });
+    h.hotkey.emit("record-start");
     h.advance(1200);
-    h.hotkey.emit("record-stop");
+    h.hotkey.emit("record-stop", { mode: "summary" });
     h.fireWav(wavOfMs(1000));
     await new Promise((r) => setTimeout(r, 0));
 
@@ -411,29 +411,30 @@ describe("Controller", () => {
     expect(captured.maxAttempts).toBe(1);
   });
 
-  it("captures mode at record-stop, not when the WAV arrives, so a race with a new recording can't relabel a queued clip", async () => {
+  // Regression test for the modeQueue desync (commit cf60107): if
+  // getUserMedia rejects (mic denied/busy/unplugged), the renderer never
+  // sends capture:pcm, so no WAV ever arrives for a stopped recording. A FIFO
+  // modeQueue would leave that entry permanently at the front, mislabeling
+  // every later clip for the rest of the process's life. The single
+  // pendingMode field instead leaves one stale value that the very next
+  // record-stop overwrites — a lost WAV, not a permanent desync.
+  it("does not let a lost WAV (no capture:pcm after a stop) mislabel the next recording", async () => {
     const h = harness();
     h.controller.start();
 
-    h.hotkey.emit("record-start", { mode: "summary" });
+    h.hotkey.emit("record-start");
     h.advance(1200);
-    h.hotkey.emit("record-stop"); // mode captured as "summary" here
+    h.hotkey.emit("record-stop", { mode: "summary" });
+    // No fireWav here: simulates getUserMedia rejecting, so this clip's WAV
+    // is lost entirely.
 
-    // A new recording starts (and changes this.mode) before the first clip's
-    // WAV arrives — the narrow window Fix 8 closes.
-    h.hotkey.emit("record-start", { mode: "transcript" });
+    h.hotkey.emit("record-start");
     h.advance(1200);
-    h.hotkey.emit("record-stop");
-
-    h.fireWav(wavOfMs(1000)); // from the summary hold
-    h.fireWav(wavOfMs(1000)); // from the transcript hold
+    h.hotkey.emit("record-stop", { mode: "transcript" });
+    h.fireWav(wavOfMs(1000));
 
     await new Promise((r) => setTimeout(r, 0));
-    await new Promise((r) => setTimeout(r, 0));
 
-    expect(h.typed).toEqual([
-      { parts: ["text", "summary"], separator: "blank-line" },
-      "text",
-    ]);
+    expect(h.typed).toEqual(["text"]);
   });
 });
