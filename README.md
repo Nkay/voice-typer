@@ -14,9 +14,13 @@ has focus — no clicking required.
 4. The returned text is typed into the currently focused field via the keyboard
    (no mouse involved).
 
-Holding the **summary chord** instead (Left Ctrl + Left Shift by default) does the
-same, then sends the transcript to a Mistral chat model for a summary and types
-the transcript, a blank line, and the summary. If the summary call fails the
+Also holding the **summary modifier** (Right Shift by default) at any point during
+the hold upgrades that recording to transcript + summary: release the record key
+and VoiceTyper sends the transcript to a Mistral chat model for a summary, then
+types the transcript, a blank line, and the summary. The modifier is sticky for
+the hold — press it any time before releasing the record key, or release it
+early, and the upgrade still applies — but it does nothing by itself; the record
+key must be held for anything to happen at all. If the summary call fails the
 transcript is still typed and a notification says so — a failed summary never
 costs you your dictation.
 
@@ -78,9 +82,10 @@ The same Settings window lets you configure:
 - **Record key** — the key you hold for a plain transcript. Defaults to **Right
   Alt (AltGr)**. Selectable keys are Left/Right Alt, Left/Right Ctrl,
   Left/Right Shift, F1–F24, and Space.
-- **Summary keys** — the two keys you hold together for transcript + summary.
-  Defaults to **Left Ctrl + Left Shift**. Both must differ from the record key.
-  Set either to *— none —* to disable the chord.
+- **Summary modifier** — the key that, held along with the record key at any
+  point during the hold, upgrades a recording to transcript + summary. Defaults
+  to **Right Shift**. Must differ from the record key. Set to *— none —* to
+  disable the summary command entirely.
 - **Summary model** — which Mistral chat model writes the summary. The list is
   fetched from your account, so it reflects the models you actually have access
   to. Needs a saved API key.
