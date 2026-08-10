@@ -49,8 +49,13 @@ class Hotkey extends EventEmitter {
     const recordDown = Boolean(this.recordKey) && this.downKeys.has(this.recordKey);
 
     if (!this.mode) {
-      // The chord wins when both could start, but validation makes that
-      // impossible in practice — the bindings share no key.
+      // chordDown and recordDown can both be true here — holding the chord's
+      // two keys together with the record key is reachable, not impossible;
+      // validation only guarantees the bindings share no single key. When a
+      // same-tick collision does happen, the record key wins, not the chord:
+      // watchedKeys() lists it first, so its DOWN event reaches _onKey (and
+      // locks the mode as "transcript") before either chord key's event is
+      // even processed — regardless of `chordDown` being checked first below.
       if (chordDown) {
         this.mode = "summary";
         this.emit("record-start", { mode: "summary" });

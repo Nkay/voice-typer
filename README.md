@@ -23,6 +23,13 @@ costs you your dictation.
 A tray icon shows the current state (idle, recording, processing, paused, or
 error) and gives you a menu to pause/resume, open Settings, or quit.
 
+> **A note on typing speed.** Text is typed via synthesized keystrokes, one
+> character at a time with a small delay between each (2 ms). A long dictation
+> can occupy the keyboard for a few seconds, and the summary command roughly
+> doubles the character count — transcript plus summary — so it takes about
+> twice as long. Avoid typing yourself into the focused field until the tray
+> icon leaves the "processing" state.
+
 ## Requirements
 
 - **Windows only.** VoiceTyper relies on Windows-specific APIs (global key
