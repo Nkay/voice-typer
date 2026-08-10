@@ -42,6 +42,7 @@ describe("summarize", () => {
 
     const body = JSON.parse(captured.init.body);
     expect(body.model).toBe("mistral-large-latest");
+    expect(body.temperature).toBe(0.2);
     expect(body.messages).toEqual([
       { role: "system", content: "Be terse." },
       { role: "user", content: "a long transcript" },
