@@ -4,28 +4,30 @@ function norm(name) {
   return typeof name === "string" ? name.toUpperCase() : null;
 }
 
-// Routes two independent bindings — a single record key and a two-key summary
-// chord — into record-start/record-stop, tagging each recording with a mode.
-// Config validation guarantees the record key is not part of the chord, so the
-// two bindings can never contend for the same physical key.
+// Routes a single record key, optionally upgraded by a modifier, into
+// record-start/record-stop. Recording starts and stops on the record key
+// alone; the modifier only decides which mode record-stop reports. It is
+// sticky within a hold — once seen down (at start, or at any point before
+// release) it stays counted even if released early — so the mode can only be
+// known for certain at release, not at start.
 class Hotkey extends EventEmitter {
-  constructor({ recordKey, summaryKeys = [], createListener }) {
+  constructor({ recordKey, summaryModifier, createListener }) {
     super();
     this.createListener = createListener;
     this.listener = null;
     this.downKeys = new Set();
-    this.mode = null; // null while not recording
-    this._applyBindings({ recordKey, summaryKeys });
+    this.recording = false;
+    this.sticky = false;
+    this._applyBindings({ recordKey, summaryModifier });
   }
 
-  _applyBindings({ recordKey, summaryKeys }) {
+  _applyBindings({ recordKey, summaryModifier }) {
     this.recordKey = norm(recordKey);
-    const chord = Array.isArray(summaryKeys) ? summaryKeys.map(norm) : [];
-    this.summaryKeys = chord.length === 2 && chord.every(Boolean) ? chord : [];
+    this.summaryModifier = norm(summaryModifier) || null;
   }
 
   watchedKeys() {
-    return [this.recordKey, ...this.summaryKeys].filter(Boolean);
+    return [this.recordKey, this.summaryModifier].filter(Boolean);
   }
 
   start() {
@@ -40,46 +42,38 @@ class Hotkey extends EventEmitter {
     if (e.state === "DOWN") this.downKeys.add(name);
     else if (e.state === "UP") this.downKeys.delete(name);
     else return;
-    this._evaluate();
-  }
 
-  _evaluate() {
-    const chordDown =
-      this.summaryKeys.length === 2 && this.summaryKeys.every((k) => this.downKeys.has(k));
-    const recordDown = Boolean(this.recordKey) && this.downKeys.has(this.recordKey);
-
-    if (!this.mode) {
-      // chordDown and recordDown can both be true here — holding the chord's
-      // two keys together with the record key is reachable, not impossible;
-      // validation only guarantees the bindings share no single key. When a
-      // same-tick collision does happen, the record key wins, not the chord:
-      // watchedKeys() lists it first, so its DOWN event reaches _onKey (and
-      // locks the mode as "transcript") before either chord key's event is
-      // even processed — regardless of `chordDown` being checked first below.
-      if (chordDown) {
-        this.mode = "summary";
-        this.emit("record-start", { mode: "summary" });
-      } else if (recordDown) {
-        this.mode = "transcript";
-        this.emit("record-start", { mode: "transcript" });
-      }
-      return;
-    }
-
-    // Mode is locked for the duration of a hold: only the binding that started
-    // the recording can end it.
-    const stillHeld = this.mode === "summary" ? chordDown : recordDown;
-    if (!stillHeld) {
-      this.mode = null;
-      this.emit("record-stop");
+    if (name === this.recordKey) {
+      if (e.state === "DOWN") this._startIfIdle();
+      else this._stopIfRecording();
+    } else if (name === this.summaryModifier) {
+      // Sticky within a hold: once set, never cleared here — only a fresh
+      // record-start (via _startIfIdle) or setBindings resets it.
+      if (e.state === "DOWN" && this.recording) this.sticky = true;
     }
   }
 
-  setBindings({ recordKey, summaryKeys }) {
-    this._applyBindings({ recordKey, summaryKeys });
+  _startIfIdle() {
+    if (this.recording) return; // auto-repeat DOWN while already recording
+    this.recording = true;
+    this.sticky = Boolean(this.summaryModifier) && this.downKeys.has(this.summaryModifier);
+    this.emit("record-start");
+  }
+
+  _stopIfRecording() {
+    if (!this.recording) return;
+    const mode = this.sticky ? "summary" : "transcript";
+    this.recording = false;
+    this.sticky = false;
+    this.emit("record-stop", { mode });
+  }
+
+  setBindings({ recordKey, summaryModifier }) {
+    this._applyBindings({ recordKey, summaryModifier });
     // Drop any hold in progress: the keys it referred to may no longer be bound.
     this.downKeys.clear();
-    this.mode = null;
+    this.recording = false;
+    this.sticky = false;
     if (this.listener && typeof this.listener.setKeys === "function") {
       this.listener.setKeys(this.watchedKeys());
     }
