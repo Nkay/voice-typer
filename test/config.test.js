@@ -53,49 +53,56 @@ describe("config", () => {
 
   it("defaults the summary settings", () => {
     const c = cfg.mergeConfig({});
-    expect(c.summaryKeys).toEqual(["LEFT CTRL", "LEFT SHIFT"]);
+    expect(c.summaryModifier).toBe("RIGHT SHIFT");
     expect(c.summaryModel).toBe("mistral-small-latest");
     expect(c.summaryPrompt).toBe(cfg.DEFAULT_SUMMARY_PROMPT);
     expect(c.separator).toBe("blank-line");
   });
 
-  it("keeps a valid two-key chord", () => {
-    const c = cfg.validateConfig({ ...cfg.DEFAULTS, summaryKeys: ["F13", "F14"] });
-    expect(c.summaryKeys).toEqual(["F13", "F14"]);
+  it("does not expose summaryKeys anymore", () => {
+    const c = cfg.mergeConfig({});
+    expect("summaryKeys" in c).toBe(false);
+    expect("summaryKeys" in cfg.DEFAULTS).toBe(false);
   });
 
-  it("upper-cases chord key names", () => {
-    const c = cfg.validateConfig({ ...cfg.DEFAULTS, summaryKeys: ["left ctrl", "left shift"] });
-    expect(c.summaryKeys).toEqual(["LEFT CTRL", "LEFT SHIFT"]);
+  it("keeps a valid summaryModifier", () => {
+    const c = cfg.validateConfig({ ...cfg.DEFAULTS, summaryModifier: "F13" });
+    expect(c.summaryModifier).toBe("F13");
   });
 
-  it("disables the chord when it collides with the record key", () => {
+  it("upper-cases the summaryModifier", () => {
+    const c = cfg.validateConfig({ ...cfg.DEFAULTS, summaryModifier: "left shift" });
+    expect(c.summaryModifier).toBe("LEFT SHIFT");
+  });
+
+  it("keeps an empty summaryModifier as a deliberate opt-out", () => {
+    const c = cfg.validateConfig({ ...cfg.DEFAULTS, summaryModifier: "" });
+    expect(c.summaryModifier).toBe("");
+  });
+
+  it("disables the modifier, rather than substituting the default, when it collides with the record key", () => {
     const c = cfg.validateConfig({
       ...cfg.DEFAULTS,
-      recordKey: "LEFT CTRL",
-      summaryKeys: ["LEFT CTRL", "LEFT SHIFT"],
+      recordKey: "RIGHT SHIFT",
+      summaryModifier: "RIGHT SHIFT",
     });
-    expect(c.summaryKeys).toEqual([]);
-    expect(c.recordKey).toBe("LEFT CTRL");
+    expect(c.summaryModifier).toBe("");
+    expect(c.recordKey).toBe("RIGHT SHIFT");
   });
 
-  it("disables the chord when both keys are the same", () => {
-    const c = cfg.validateConfig({ ...cfg.DEFAULTS, summaryKeys: ["F13", "F13"] });
-    expect(c.summaryKeys).toEqual([]);
+  it("disables the modifier when it is not in the catalog", () => {
+    const c = cfg.validateConfig({ ...cfg.DEFAULTS, summaryModifier: "ESCAPE" });
+    expect(c.summaryModifier).toBe("");
   });
 
-  it("disables the chord for a wrong-length or non-array value", () => {
-    expect(cfg.validateConfig({ ...cfg.DEFAULTS, summaryKeys: ["F13"] }).summaryKeys).toEqual([]);
+  it("disables the modifier for a non-string value", () => {
+    expect(cfg.validateConfig({ ...cfg.DEFAULTS, summaryModifier: null }).summaryModifier).toBe(
+      ""
+    );
     expect(
-      cfg.validateConfig({ ...cfg.DEFAULTS, summaryKeys: ["F13", "F14", "F15"] }).summaryKeys
-    ).toEqual([]);
-    expect(cfg.validateConfig({ ...cfg.DEFAULTS, summaryKeys: "F13" }).summaryKeys).toEqual([]);
-    expect(cfg.validateConfig({ ...cfg.DEFAULTS, summaryKeys: null }).summaryKeys).toEqual([]);
-  });
-
-  it("disables the chord when a key is not in the catalog", () => {
-    const c = cfg.validateConfig({ ...cfg.DEFAULTS, summaryKeys: ["LEFT CTRL", "ESCAPE"] });
-    expect(c.summaryKeys).toEqual([]);
+      cfg.validateConfig({ ...cfg.DEFAULTS, summaryModifier: undefined }).summaryModifier
+    ).toBe("");
+    expect(cfg.validateConfig({ ...cfg.DEFAULTS, summaryModifier: 7 }).summaryModifier).toBe("");
   });
 
   it("falls back to the default summaryModel for an empty or non-string value", () => {
@@ -138,37 +145,46 @@ describe("config", () => {
     const p = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "vt-")), "config.json");
     cfg.saveConfig(
       p,
-      cfg.mergeConfig({ summaryKeys: ["F13", "F14"], separator: "dash", summaryPrompt: "Short." })
+      cfg.mergeConfig({ summaryModifier: "F13", separator: "dash", summaryPrompt: "Short." })
     );
     const c = cfg.loadConfig(p);
-    expect(c.summaryKeys).toEqual(["F13", "F14"]);
+    expect(c.summaryModifier).toBe("F13");
     expect(c.separator).toBe("dash");
     expect(c.summaryPrompt).toBe("Short.");
   });
+
+  it("drops a legacy summaryKeys field and defaults summaryModifier when loading an old config.json", () => {
+    const p = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "vt-")), "config.json");
+    fs.writeFileSync(
+      p,
+      JSON.stringify({ recordKey: "RIGHT ALT", summaryKeys: ["LEFT CTRL", "LEFT SHIFT"] }),
+      "utf8"
+    );
+    const c = cfg.loadConfig(p);
+    expect("summaryKeys" in c).toBe(false);
+    expect(c.summaryModifier).toBe("RIGHT SHIFT");
+    expect(c.recordKey).toBe("RIGHT ALT");
+  });
 });
 
-describe("summaryKeysError", () => {
-  it("accepts a valid chord", () => {
-    expect(cfg.summaryKeysError("RIGHT ALT", ["LEFT CTRL", "LEFT SHIFT"])).toBeNull();
+describe("summaryModifierError", () => {
+  it("accepts a valid modifier", () => {
+    expect(cfg.summaryModifierError("RIGHT ALT", "RIGHT SHIFT")).toBeNull();
   });
 
-  it("accepts an empty chord as a deliberate opt-out", () => {
-    expect(cfg.summaryKeysError("RIGHT ALT", [])).toBeNull();
+  it("accepts an empty string as a deliberate opt-out", () => {
+    expect(cfg.summaryModifierError("RIGHT ALT", "")).toBeNull();
   });
 
-  it("rejects two identical keys", () => {
-    expect(cfg.summaryKeysError("RIGHT ALT", ["F13", "F13"])).toMatch(/different/i);
-  });
-
-  it("rejects a chord containing the record key", () => {
-    expect(cfg.summaryKeysError("LEFT CTRL", ["LEFT CTRL", "LEFT SHIFT"])).toMatch(/record key/i);
-  });
-
-  it("rejects a half-filled chord", () => {
-    expect(cfg.summaryKeysError("RIGHT ALT", ["LEFT CTRL"])).toMatch(/two keys/i);
+  it("rejects a modifier equal to the record key", () => {
+    expect(cfg.summaryModifierError("LEFT CTRL", "LEFT CTRL")).toMatch(/record key/i);
   });
 
   it("rejects an unknown key name", () => {
-    expect(cfg.summaryKeysError("RIGHT ALT", ["LEFT CTRL", "ESCAPE"])).toMatch(/not a bindable key/i);
+    expect(cfg.summaryModifierError("RIGHT ALT", "ESCAPE")).toMatch(/not a bindable key/i);
+  });
+
+  it("rejects a non-string, non-empty value", () => {
+    expect(cfg.summaryModifierError("RIGHT ALT", null)).toMatch(/not a bindable key/i);
   });
 });

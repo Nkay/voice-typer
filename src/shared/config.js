@@ -9,7 +9,9 @@ const DEFAULT_SUMMARY_PROMPT =
 
 const DEFAULTS = {
   recordKey: "RIGHT ALT",
-  summaryKeys: ["LEFT CTRL", "LEFT SHIFT"],
+  // "" disables the summary command. Pairs with the right-side AltGr record
+  // key default: hold AltGr, add Right Shift for transcript + summary.
+  summaryModifier: "RIGHT SHIFT",
   language: "auto",
   model: "voxtral-mini-latest",
   summaryModel: "mistral-small-latest",
@@ -24,22 +26,16 @@ const LANGUAGES = ["auto", "de", "en"];
 
 const SEPARATORS = ["blank-line", "dash", "spaces"];
 
-// Returns a message fit for the Settings window, or null when the chord is
-// usable. An empty array is a deliberate opt-out, not an error. The main process
-// is the only place this rule lives; the renderer surfaces the message returned
-// by settings:save rather than re-implementing the check.
-function summaryKeysError(recordKey, summaryKeys) {
-  if (Array.isArray(summaryKeys) && summaryKeys.length === 0) return null;
-  if (!Array.isArray(summaryKeys) || summaryKeys.length !== 2) {
-    return "Pick two keys for the summary chord, or “— none —” to disable it.";
-  }
-  const keys = summaryKeys.map((k) => (typeof k === "string" ? k.toUpperCase() : k));
-  for (const key of keys) {
-    if (!KEY_NAMES.includes(key)) return `“${key}” is not a bindable key.`;
-  }
-  if (keys[0] === keys[1]) return "The two summary keys must be different.";
+// Returns a message fit for the Settings window, or null when the modifier is
+// usable. An empty string is a deliberate opt-out, not an error. The main
+// process is the only place this rule lives; the renderer surfaces the
+// message returned by settings:save rather than re-implementing the check.
+function summaryModifierError(recordKey, summaryModifier) {
+  if (summaryModifier === "") return null;
+  const mod = typeof summaryModifier === "string" ? summaryModifier.toUpperCase() : summaryModifier;
+  if (!KEY_NAMES.includes(mod)) return `“${mod}” is not a bindable key.`;
   const record = typeof recordKey === "string" ? recordKey.toUpperCase() : recordKey;
-  if (keys.includes(record)) return "The summary keys must differ from the record key.";
+  if (mod === record) return "The summary modifier must differ from the record key.";
   return null;
 }
 
@@ -66,11 +62,14 @@ function validateConfig(config) {
     c.sampleRate = DEFAULTS.sampleRate;
   }
   if (!KEY_NAMES.includes(c.recordKey)) c.recordKey = DEFAULTS.recordKey;
-  // An invalid chord is disabled rather than replaced by the default chord: a
-  // substituted default could itself collide with a custom record key.
-  c.summaryKeys = summaryKeysError(c.recordKey, c.summaryKeys)
-    ? []
-    : (c.summaryKeys || []).map((k) => k.toUpperCase());
+  // An invalid modifier is disabled rather than replaced by the default
+  // modifier: a substituted default could itself collide with a custom
+  // record key.
+  c.summaryModifier = summaryModifierError(c.recordKey, c.summaryModifier)
+    ? ""
+    : typeof c.summaryModifier === "string"
+      ? c.summaryModifier.toUpperCase()
+      : "";
   c.summaryModel = nonEmptyString(c.summaryModel, DEFAULTS.summaryModel);
   // Not trimmed: a custom prompt may end in a meaningful newline.
   c.summaryPrompt =
@@ -103,7 +102,7 @@ module.exports = {
   LANGUAGES,
   SEPARATORS,
   DEFAULT_SUMMARY_PROMPT,
-  summaryKeysError,
+  summaryModifierError,
   mergeConfig,
   validateConfig,
   loadConfig,
