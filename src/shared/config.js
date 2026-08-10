@@ -1,9 +1,20 @@
 const fs = require("fs");
 
+const { KEY_NAMES } = require("./keys.js");
+
+const DEFAULT_SUMMARY_PROMPT =
+  "Summarise the transcript below in the same language it is written in. " +
+  "Be concise: one to three sentences, no preamble, no bullet points. " +
+  "Output only the summary text.";
+
 const DEFAULTS = {
   recordKey: "RIGHT ALT",
+  summaryKeys: ["LEFT CTRL", "LEFT SHIFT"],
   language: "auto",
   model: "voxtral-mini-latest",
+  summaryModel: "mistral-small-latest",
+  summaryPrompt: DEFAULT_SUMMARY_PROMPT,
+  separator: "blank-line",
   sampleRate: 16000,
   micDeviceId: null,
   autoLaunch: false,
@@ -11,10 +22,26 @@ const DEFAULTS = {
 
 const LANGUAGES = ["auto", "de", "en"];
 
-// Must match the poller's KEY_VCODES keys in src/main/keyPoller.js — a config
-// value outside this list would set a hotkey that GetAsyncKeyState polling
-// never fires for, leaving the tray showing "active" with a dead hotkey.
-const RECORD_KEYS = ["RIGHT ALT", "LEFT ALT", "RIGHT CTRL", "LEFT CTRL"];
+const SEPARATORS = ["blank-line", "dash", "spaces"];
+
+// Returns a message fit for the Settings window, or null when the chord is
+// usable. An empty array is a deliberate opt-out, not an error. The main process
+// is the only place this rule lives; the renderer surfaces the message returned
+// by settings:save rather than re-implementing the check.
+function summaryKeysError(recordKey, summaryKeys) {
+  if (Array.isArray(summaryKeys) && summaryKeys.length === 0) return null;
+  if (!Array.isArray(summaryKeys) || summaryKeys.length !== 2) {
+    return "Pick two keys for the summary chord, or “— none —” to disable it.";
+  }
+  const keys = summaryKeys.map((k) => (typeof k === "string" ? k.toUpperCase() : k));
+  for (const key of keys) {
+    if (!KEY_NAMES.includes(key)) return `“${key}” is not a bindable key.`;
+  }
+  if (keys[0] === keys[1]) return "The two summary keys must be different.";
+  const record = typeof recordKey === "string" ? recordKey.toUpperCase() : recordKey;
+  if (keys.includes(record)) return "The summary keys must differ from the record key.";
+  return null;
+}
 
 function mergeConfig(overrides) {
   const out = { ...DEFAULTS };
@@ -26,13 +53,31 @@ function mergeConfig(overrides) {
   return validateConfig(out);
 }
 
+function nonEmptyString(value, fallback) {
+  if (typeof value !== "string") return fallback;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : fallback;
+}
+
 function validateConfig(config) {
   const c = { ...config };
   if (!LANGUAGES.includes(c.language)) c.language = DEFAULTS.language;
   if (!Number.isInteger(c.sampleRate) || c.sampleRate <= 0) {
     c.sampleRate = DEFAULTS.sampleRate;
   }
-  if (!RECORD_KEYS.includes(c.recordKey)) c.recordKey = DEFAULTS.recordKey;
+  if (!KEY_NAMES.includes(c.recordKey)) c.recordKey = DEFAULTS.recordKey;
+  // An invalid chord is disabled rather than replaced by the default chord: a
+  // substituted default could itself collide with a custom record key.
+  c.summaryKeys = summaryKeysError(c.recordKey, c.summaryKeys)
+    ? []
+    : (c.summaryKeys || []).map((k) => k.toUpperCase());
+  c.summaryModel = nonEmptyString(c.summaryModel, DEFAULTS.summaryModel);
+  // Not trimmed: a custom prompt may end in a meaningful newline.
+  c.summaryPrompt =
+    typeof c.summaryPrompt === "string" && c.summaryPrompt.trim().length > 0
+      ? c.summaryPrompt
+      : DEFAULTS.summaryPrompt;
+  if (!SEPARATORS.includes(c.separator)) c.separator = DEFAULTS.separator;
   c.autoLaunch = Boolean(c.autoLaunch);
   return c;
 }
@@ -56,7 +101,9 @@ function saveConfig(filePath, config) {
 module.exports = {
   DEFAULTS,
   LANGUAGES,
-  RECORD_KEYS,
+  SEPARATORS,
+  DEFAULT_SUMMARY_PROMPT,
+  summaryKeysError,
   mergeConfig,
   validateConfig,
   loadConfig,
