@@ -26,10 +26,22 @@ function harness(overrides = {}) {
     hotkey,
     recorder,
     transcribe: overrides.transcribe || (async () => "text"),
-    typer: { type: async (t) => typed.push(t) },
+    summarize: overrides.summarize || (async () => "summary"),
+    typer: {
+      type: async (t) => typed.push(t),
+      typeParts: async (parts, separator) => typed.push({ parts, separator }),
+    },
     tray: { setState: (s) => states.push(s) },
     getApiKey: overrides.getApiKey || (() => "key"),
-    getConfig: () => ({ model: "voxtral-mini-latest", language: "auto" }),
+    getConfig:
+      overrides.getConfig ||
+      (() => ({
+        model: "voxtral-mini-latest",
+        language: "auto",
+        summaryModel: "mistral-small-latest",
+        summaryPrompt: "Be terse.",
+        separator: "blank-line",
+      })),
     notify: (t, b) => notifications.push([t, b]),
     minDurationMs: 200,
     minHoldMs: 1000,
@@ -140,7 +152,8 @@ describe("Controller", () => {
       hotkey,
       recorder,
       transcribe: async () => "ok",
-      typer: { type: async (t) => typed.push(t) },
+      summarize: async () => "summary",
+      typer: { type: async (t) => typed.push(t), typeParts: async () => {} },
       tray,
       getApiKey: () => "k",
       getConfig: () => ({ model: "m", language: "auto" }),
@@ -202,5 +215,140 @@ describe("Controller", () => {
     h.fireWav(wavOfMs(1200));
     await new Promise((r) => setTimeout(r, 0));
     expect(h.typed).toEqual(["text"]);
+  });
+
+  it("types transcript then summary when started in summary mode", async () => {
+    let captured;
+    const summarize = async (text, opts) => {
+      captured = { text, opts };
+      return "the summary";
+    };
+    const h = harness({ summarize });
+    h.controller.start();
+    h.hotkey.emit("record-start", { mode: "summary" });
+    h.advance(1200);
+    h.hotkey.emit("record-stop");
+    h.fireWav(wavOfMs(1000));
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(h.typed).toEqual([{ parts: ["text", "the summary"], separator: "blank-line" }]);
+    expect(captured.text).toBe("text");
+    expect(captured.opts.model).toBe("mistral-small-latest");
+    expect(captured.opts.prompt).toBe("Be terse.");
+    expect(captured.opts.apiKey).toBe("key");
+    expect(h.states[h.states.length - 1]).toBe("active");
+  });
+
+  it("passes the configured separator through to the typer", async () => {
+    const h = harness({
+      getConfig: () => ({
+        model: "m",
+        language: "auto",
+        summaryModel: "sm",
+        summaryPrompt: "p",
+        separator: "dash",
+      }),
+    });
+    h.controller.start();
+    h.hotkey.emit("record-start", { mode: "summary" });
+    h.advance(1200);
+    h.hotkey.emit("record-stop");
+    h.fireWav(wavOfMs(1000));
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(h.typed).toEqual([{ parts: ["text", "summary"], separator: "dash" }]);
+  });
+
+  it("types the transcript alone and notifies when summarization fails", async () => {
+    const h = harness({
+      summarize: async () => {
+        throw new Error("chat api down");
+      },
+    });
+    h.controller.start();
+    h.hotkey.emit("record-start", { mode: "summary" });
+    h.advance(1200);
+    h.hotkey.emit("record-stop");
+    h.fireWav(wavOfMs(1000));
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(h.typed).toEqual(["text"]);
+    expect(h.notifications).toEqual([["VoiceTyper", "Summary failed — typed transcript only"]]);
+    expect(h.states).not.toContain("error");
+    expect(h.states[h.states.length - 1]).toBe("active");
+  });
+
+  it("does not call summarize in transcript mode", async () => {
+    let called = 0;
+    const h = harness({
+      summarize: async () => {
+        called++;
+        return "s";
+      },
+    });
+    h.controller.start();
+    h.hotkey.emit("record-start", { mode: "transcript" });
+    h.advance(1200);
+    h.hotkey.emit("record-stop");
+    h.fireWav(wavOfMs(1000));
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(called).toBe(0);
+    expect(h.typed).toEqual(["text"]);
+  });
+
+  it("treats a record-start with no payload as transcript mode", async () => {
+    const h = harness();
+    h.controller.start();
+    h.hotkey.emit("record-start");
+    h.advance(1200);
+    h.hotkey.emit("record-stop");
+    h.fireWav(wavOfMs(1000));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(h.typed).toEqual(["text"]);
+  });
+
+  it("keeps each queued clip's own mode", async () => {
+    const h = harness();
+    h.controller.start();
+
+    h.hotkey.emit("record-start", { mode: "summary" });
+    h.advance(1200);
+    h.hotkey.emit("record-stop");
+    h.fireWav(wavOfMs(1000));
+
+    h.hotkey.emit("record-start", { mode: "transcript" });
+    h.advance(1200);
+    h.hotkey.emit("record-stop");
+    h.fireWav(wavOfMs(1000));
+
+    await new Promise((r) => setTimeout(r, 0));
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(h.typed).toEqual([
+      { parts: ["text", "summary"], separator: "blank-line" },
+      "text",
+    ]);
+  });
+
+  it("does not summarize when the transcript came back empty", async () => {
+    let called = 0;
+    const h = harness({
+      transcribe: async () => "",
+      summarize: async () => {
+        called++;
+        return "s";
+      },
+    });
+    h.controller.start();
+    h.hotkey.emit("record-start", { mode: "summary" });
+    h.advance(1200);
+    h.hotkey.emit("record-stop");
+    h.fireWav(wavOfMs(1000));
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(called).toBe(0);
+    expect(h.typed).toEqual([]);
+    expect(h.notifications).toEqual([]);
   });
 });

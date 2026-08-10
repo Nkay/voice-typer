@@ -3,6 +3,7 @@ class Controller {
     this.hotkey = deps.hotkey;
     this.recorder = deps.recorder;
     this.transcribe = deps.transcribe;
+    this.summarize = deps.summarize;
     this.typer = deps.typer;
     this.tray = deps.tray;
     this.getApiKey = deps.getApiKey;
@@ -20,10 +21,11 @@ class Controller {
     this.pressedAt = 0;
     // Infinity = no completed press cycle yet; such clips pass the guard.
     this.lastHoldMs = Infinity;
+    this.mode = "transcript";
   }
 
   start() {
-    this.hotkey.on("record-start", () => this._onStart());
+    this.hotkey.on("record-start", (payload) => this._onStart(payload));
     this.hotkey.on("record-stop", () => this._onStop());
     this.recorder.onWav((bytes) => this._onWav(bytes));
     this._idle();
@@ -52,7 +54,7 @@ class Controller {
     this.tray.setState(state);
   }
 
-  _onStart() {
+  _onStart(payload) {
     if (this.paused) return;
     if (!this.getApiKey()) {
       this.notify("VoiceTyper", "Set your Mistral API key in Settings");
@@ -62,6 +64,7 @@ class Controller {
     if (this.recording) return;
     this.recording = true;
     this.pressedAt = this.now();
+    this.mode = payload && payload.mode === "summary" ? "summary" : "transcript";
     this._setState("recording");
     this.recorder.start();
   }
@@ -80,7 +83,7 @@ class Controller {
       this._idle();
       return;
     }
-    this.queue.push(bytes);
+    this.queue.push({ bytes, mode: this.mode });
     // _pump() is fire-and-forget here; its own try/finally already resets
     // `working` on any failure, but a synchronous throw from _setState
     // (e.g. tray.setState) would otherwise escape as an unhandled
@@ -94,7 +97,7 @@ class Controller {
     this.working = true;
     try {
       while (this.queue.length > 0) {
-        const bytes = this.queue.shift();
+        const { bytes, mode } = this.queue.shift();
         this._setState("processing");
         try {
           const cfg = this.getConfig();
@@ -103,7 +106,7 @@ class Controller {
             model: cfg.model,
             language: cfg.language,
           });
-          if (text) await this.typer.type(text);
+          if (text) await this._typeResult(text, mode, cfg);
         } catch (err) {
           this._setState("error");
           this.notify("VoiceTyper", this._errorMessage(err));
@@ -113,6 +116,32 @@ class Controller {
       this.working = false;
       this._idle();
     }
+  }
+
+  // A failed summary must never cost the user their dictation: the transcript is
+  // typed regardless, and the tray stays out of the error state because the
+  // recording itself succeeded.
+  async _typeResult(text, mode, cfg) {
+    if (mode !== "summary") {
+      await this.typer.type(text);
+      return;
+    }
+
+    let summary;
+    try {
+      summary = await this.summarize(text, {
+        apiKey: this.getApiKey(),
+        model: cfg.summaryModel,
+        prompt: cfg.summaryPrompt,
+      });
+    } catch (err) {
+      console.error("VoiceTyper: summarization failed", err);
+      this.notify("VoiceTyper", "Summary failed — typed transcript only");
+      await this.typer.type(text);
+      return;
+    }
+
+    await this.typer.typeParts([text, summary], cfg.separator);
   }
 
   _errorMessage(err) {
