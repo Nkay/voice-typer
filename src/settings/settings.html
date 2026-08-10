@@ -13,7 +13,6 @@
       #status { margin-left: 12px; color: #2e7d32; }
       textarea { width: 100%; padding: 6px; margin-top: 4px; box-sizing: border-box;
                  font-family: Consolas, monospace; font-size: 12px; resize: vertical; }
-      .pair { display: flex; gap: 8px; }
       .warn { color: #b26500; font-size: 12px; margin-top: 4px; }
       .error { color: #c62828; }
       .hint { color: #666; font-size: 12px; margin-top: 4px; font-weight: 400; }
@@ -33,13 +32,11 @@
     <label>Record key
       <select id="recordKey"></select>
     </label>
-    <label>Summary keys (hold both)
-      <div class="pair">
-        <select id="summaryKey1"></select>
-        <select id="summaryKey2"></select>
-      </div>
-      <div class="hint">Must differ from the record key. Holding Space also types
-        spaces; some apps claim function keys.</div>
+    <label>Summary modifier (hold with the record key)
+      <select id="summaryModifier"></select>
+      <div class="hint">Does nothing on its own — hold it along with the record key
+        for transcript + summary. Must differ from the record key. Holding Space
+        also types spaces; some apps claim function keys.</div>
     </label>
     <label>Summary model
       <select id="summaryModel"></select>

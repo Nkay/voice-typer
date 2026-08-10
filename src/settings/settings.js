@@ -83,10 +83,7 @@ async function init() {
     const { config, hasKey, keys, models, modelsError } = await window.settingsAPI.get();
 
     fillKeySelect(document.getElementById("recordKey"), keys, config.recordKey);
-    fillKeySelect(document.getElementById("summaryKey1"), keys, config.summaryKeys[0], {
-      includeNone: true,
-    });
-    fillKeySelect(document.getElementById("summaryKey2"), keys, config.summaryKeys[1], {
+    fillKeySelect(document.getElementById("summaryModifier"), keys, config.summaryModifier, {
       includeNone: true,
     });
     fillModelSelect(models, modelsError, config.summaryModel);
@@ -103,20 +100,11 @@ async function init() {
     document.getElementById("save").addEventListener("click", async () => {
       try {
         const micValue = document.getElementById("mic").value;
-        // Both "— none —" is a deliberate opt-out: [] . Exactly one filled is
-        // a mistake, not a disable — send it through unfiltered-length (via
-        // filter(Boolean), which yields a single-element array here) so the
-        // main process's summaryKeysError rejects it with its own message
-        // instead of silently switching the chord off.
-        const chord = [
-          document.getElementById("summaryKey1").value,
-          document.getElementById("summaryKey2").value,
-        ].filter(Boolean);
         const payload = {
           config: {
             language: document.getElementById("language").value,
             recordKey: document.getElementById("recordKey").value,
-            summaryKeys: chord,
+            summaryModifier: document.getElementById("summaryModifier").value,
             summaryModel: document.getElementById("summaryModel").value,
             summaryPrompt: document.getElementById("summaryPrompt").value,
             separator: document.getElementById("separator").value,
