@@ -20,11 +20,14 @@ const DEFAULTS = {
   sampleRate: 16000,
   micDeviceId: null,
   autoLaunch: false,
+  transcriptionProvider: "mistral",
 };
 
 const LANGUAGES = ["auto", "de", "en"];
 
 const SEPARATORS = ["blank-line", "dash", "spaces"];
+
+const PROVIDERS = ["mistral", "google", "both"];
 
 // Returns a message fit for the Settings window, or null when the modifier is
 // usable. An empty string is a deliberate opt-out, not an error. The main
@@ -76,6 +79,7 @@ function validateConfig(config) {
       : DEFAULTS.summaryPrompt;
   if (!SEPARATORS.includes(c.separator)) c.separator = DEFAULTS.separator;
   c.autoLaunch = Boolean(c.autoLaunch);
+  if (!PROVIDERS.includes(c.transcriptionProvider)) c.transcriptionProvider = DEFAULTS.transcriptionProvider;
   return c;
 }
 
@@ -99,6 +103,7 @@ module.exports = {
   DEFAULTS,
   LANGUAGES,
   SEPARATORS,
+  PROVIDERS,
   DEFAULT_SUMMARY_PROMPT,
   summaryModifierError,
   mergeConfig,

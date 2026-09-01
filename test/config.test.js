@@ -165,6 +165,36 @@ describe("config", () => {
     expect(c.summaryModifier).toBe("RIGHT SHIFT");
     expect(c.recordKey).toBe("RIGHT ALT");
   });
+
+  it("defaults transcriptionProvider to mistral", () => {
+    const c = cfg.mergeConfig({});
+    expect(c.transcriptionProvider).toBe("mistral");
+  });
+
+  it("accepts valid transcription providers", () => {
+    for (const p of ["mistral", "google", "both"]) {
+      expect(cfg.validateConfig({ ...cfg.DEFAULTS, transcriptionProvider: p }).transcriptionProvider).toBe(p);
+    }
+  });
+
+  it("falls back to mistral for an invalid provider", () => {
+    expect(
+      cfg.validateConfig({ ...cfg.DEFAULTS, transcriptionProvider: "openai" }).transcriptionProvider
+    ).toBe("mistral");
+  });
+
+  it("falls back to mistral for a non-string provider", () => {
+    expect(
+      cfg.validateConfig({ ...cfg.DEFAULTS, transcriptionProvider: null }).transcriptionProvider
+    ).toBe("mistral");
+  });
+
+  it("round-trips transcriptionProvider through save and load", () => {
+    const p = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "vt-")), "config.json");
+    cfg.saveConfig(p, cfg.mergeConfig({ transcriptionProvider: "both" }));
+    const c = cfg.loadConfig(p);
+    expect(c.transcriptionProvider).toBe("both");
+  });
 });
 
 describe("summaryModifierError", () => {
