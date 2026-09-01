@@ -22,6 +22,16 @@
     <label>Mistral API key
       <input id="apiKey" type="password" placeholder="leave blank to keep current key" />
     </label>
+    <label>Google API key
+      <input id="googleApiKey" type="password" placeholder="leave blank to keep current key" />
+    </label>
+    <label>Transcription provider
+      <select id="transcriptionProvider">
+        <option value="mistral">Mistral</option>
+        <option value="google">Google</option>
+        <option value="both">Both (compare)</option>
+      </select>
+    </label>
     <label>Language
       <select id="language">
         <option value="auto">Auto-detect</option>

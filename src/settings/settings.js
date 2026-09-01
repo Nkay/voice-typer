@@ -39,20 +39,16 @@ function fillModelSelect(models, modelsError, saved) {
   const warn = document.getElementById("modelWarn");
   select.replaceChildren();
 
-  // `models` is null when no list is available at all (no key, or the fetch
-  // failed) and an array — possibly empty — when the fetch succeeded.
   const haveModels = Array.isArray(models);
-
-  // Without a list, offer the saved value alone rather than an empty dropdown
-  // that would silently blank the setting on save. Copy the array before
-  // unshifting into it — `models` belongs to the caller.
   const options = haveModels && models.length > 0 ? [...models] : [saved];
   if (haveModels && models.length > 0 && !models.includes(saved)) options.unshift(saved);
 
   for (const id of options) {
     const opt = document.createElement("option");
     opt.value = id;
-    opt.textContent = id;
+    // Display: strip prefix, add provider label
+    const match = id.match(/^(mistral|google)\/(.*)/);
+    opt.textContent = match ? `${match[2]} (${match[1] === "mistral" ? "Mistral" : "Google"})` : id;
     select.appendChild(opt);
   }
   select.value = saved;
@@ -63,8 +59,6 @@ function fillModelSelect(models, modelsError, saved) {
     if (modelsError) {
       warn.textContent = `Could not load model list: ${modelsError}`;
     } else if (haveModels) {
-      // A successful fetch that legitimately returned nothing — distinct from
-      // "no list available" (missing key, or the request itself failed).
       warn.textContent = "No chat-capable models are available on this account.";
     } else {
       warn.textContent = "Could not load model list — save an API key to load it.";
@@ -80,7 +74,7 @@ function setStatus(text, isError) {
 
 async function init() {
   try {
-    const { config, hasKey, keys, models, modelsError } = await window.settingsAPI.get();
+    const { config, hasKey, hasGoogleKey, keys, models, modelsError } = await window.settingsAPI.get();
 
     fillKeySelect(document.getElementById("recordKey"), keys, config.recordKey);
     fillKeySelect(document.getElementById("summaryModifier"), keys, config.summaryModifier, {
@@ -95,6 +89,10 @@ async function init() {
     document.getElementById("apiKey").placeholder = hasKey
       ? "leave blank to keep current key"
       : "enter your Mistral API key";
+    document.getElementById("transcriptionProvider").value = config.transcriptionProvider || "mistral";
+    document.getElementById("googleApiKey").placeholder = hasGoogleKey
+      ? "leave blank to keep current key"
+      : "enter your Google API key";
     await loadMics(config.micDeviceId);
 
     document.getElementById("save").addEventListener("click", async () => {
@@ -110,8 +108,10 @@ async function init() {
             separator: document.getElementById("separator").value,
             micDeviceId: micValue || null,
             autoLaunch: document.getElementById("autoLaunch").checked,
+            transcriptionProvider: document.getElementById("transcriptionProvider").value,
           },
           apiKey: document.getElementById("apiKey").value,
+          googleApiKey: document.getElementById("googleApiKey").value,
         };
 
         const result = await window.settingsAPI.save(payload);
@@ -124,6 +124,7 @@ async function init() {
           fillModelSelect(result.models, result.modelsError, payload.config.summaryModel);
         }
         document.getElementById("apiKey").value = "";
+        document.getElementById("googleApiKey").value = "";
         setStatus("Saved", false);
         setTimeout(() => setStatus("", false), 2000);
       } catch (err) {
