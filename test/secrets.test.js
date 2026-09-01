@@ -46,3 +46,61 @@ describe("secrets", () => {
     expect(s.hasKey()).toBe(false);
   });
 });
+
+describe("dual key support", () => {
+  it("stores and retrieves a Google key independently", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "vt-sec-"));
+    const s = createSecrets({
+      safeStorage: fakeSafeStorage,
+      filePath: path.join(dir, "key.enc"),
+      googleFilePath: path.join(dir, "google-key.enc"),
+      fs,
+    });
+    expect(s.hasGoogleKey()).toBe(false);
+    expect(s.getGoogleKey()).toBe(null);
+
+    s.setGoogleKey("goog-123");
+    expect(s.hasGoogleKey()).toBe(true);
+    expect(s.getGoogleKey()).toBe("goog-123");
+
+    // Mistral key is unaffected
+    expect(s.hasKey()).toBe(false);
+  });
+
+  it("clears the Google key when set to empty", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "vt-sec-"));
+    const s = createSecrets({
+      safeStorage: fakeSafeStorage,
+      filePath: path.join(dir, "key.enc"),
+      googleFilePath: path.join(dir, "google-key.enc"),
+      fs,
+    });
+    s.setGoogleKey("x");
+    s.setGoogleKey("");
+    expect(s.hasGoogleKey()).toBe(false);
+  });
+
+  it("works with both keys simultaneously", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "vt-sec-"));
+    const s = createSecrets({
+      safeStorage: fakeSafeStorage,
+      filePath: path.join(dir, "key.enc"),
+      googleFilePath: path.join(dir, "google-key.enc"),
+      fs,
+    });
+    s.setKey("mistral-abc");
+    s.setGoogleKey("google-xyz");
+    expect(s.getKey()).toBe("mistral-abc");
+    expect(s.getGoogleKey()).toBe("google-xyz");
+  });
+
+  it("falls back gracefully when googleFilePath is not provided", () => {
+    const s = createSecrets({
+      safeStorage: fakeSafeStorage,
+      filePath: tmpFile(),
+      fs,
+    });
+    expect(s.hasGoogleKey()).toBe(false);
+    expect(s.getGoogleKey()).toBe(null);
+  });
+});
