@@ -7,6 +7,9 @@ class Controller {
     this.typer = deps.typer;
     this.tray = deps.tray;
     this.getApiKey = deps.getApiKey;
+    this.getGoogleApiKey = deps.getGoogleApiKey;
+    this.googleTranscribe = deps.googleTranscribe;
+    this.googleSummarize = deps.googleSummarize;
     this.getConfig = deps.getConfig;
     this.notify = deps.notify;
     this.minDurationMs = deps.minDurationMs != null ? deps.minDurationMs : 200;
@@ -110,12 +113,16 @@ class Controller {
         this._setState("processing");
         try {
           const cfg = this.getConfig();
-          const text = await this.transcribe(bytes, {
-            apiKey: this.getApiKey(),
-            model: cfg.model,
-            language: cfg.language,
-          });
-          if (text) await this._typeResult(text, mode, cfg);
+          const provider = cfg.transcriptionProvider || "mistral";
+
+          if (provider === "both") {
+            await this._transcribeBoth(bytes, mode, cfg);
+          } else {
+            const text = provider === "google"
+              ? await this.googleTranscribe(bytes, { apiKey: this.getGoogleApiKey(), language: cfg.language })
+              : await this.transcribe(bytes, { apiKey: this.getApiKey(), model: cfg.model, language: cfg.language });
+            if (text) await this._typeResult(text, mode, cfg);
+          }
         } catch (err) {
           this._setState("error");
           this.notify("VoiceTyper", this._errorMessage(err));
@@ -125,6 +132,37 @@ class Controller {
       this.working = false;
       this._idle();
     }
+  }
+
+  async _transcribeBoth(bytes, mode, cfg) {
+    const [mistralResult, googleResult] = await Promise.allSettled([
+      this.transcribe(bytes, { apiKey: this.getApiKey(), model: cfg.model, language: cfg.language }),
+      this.googleTranscribe(bytes, { apiKey: this.getGoogleApiKey(), language: cfg.language }),
+    ]);
+
+    const mistralOk = mistralResult.status === "fulfilled" && mistralResult.value;
+    const googleOk = googleResult.status === "fulfilled" && googleResult.value;
+
+    if (!mistralOk && !googleOk) {
+      throw mistralResult.reason || googleResult.reason;
+    }
+
+    if (mistralOk && googleOk) {
+      await this._safeType(() =>
+        this.typer.typeParts(
+          [`[Mistral]\n${mistralResult.value}`, `[Google]\n${googleResult.value}`],
+          cfg.separator
+        )
+      );
+      return;
+    }
+
+    const label = mistralOk ? "Mistral" : "Google";
+    const failedLabel = mistralOk ? "Google" : "Mistral";
+    const text = mistralOk ? mistralResult.value : googleResult.value;
+    const reason = mistralOk ? googleResult.reason : mistralResult.reason;
+    this.notify("VoiceTyper", `${failedLabel} transcription failed: ${reason?.message || "unknown error"}`);
+    await this._safeType(() => this.typer.type(`[${label}]\n${text}`));
   }
 
   // A failed summary must never cost the user their dictation: the transcript is
@@ -138,12 +176,14 @@ class Controller {
 
     let summary;
     try {
-      // Nothing is typed until this settles, so a stalled endpoint must not
-      // delay the transcript the way its own retry-happy defaults would: cap
-      // the wait and don't retry. The transcript already exists regardless.
-      summary = await this.summarize(text, {
-        apiKey: this.getApiKey(),
-        model: cfg.summaryModel,
+      const isGoogle = cfg.summaryModel.startsWith("google/");
+      const model = cfg.summaryModel.replace(/^(google|mistral)\//, "");
+      const summarizeFn = isGoogle ? this.googleSummarize : this.summarize;
+      const apiKey = isGoogle ? this.getGoogleApiKey() : this.getApiKey();
+
+      summary = await summarizeFn(text, {
+        apiKey,
+        model,
         prompt: cfg.summaryPrompt,
         timeoutMs: 10000,
         maxAttempts: 1,

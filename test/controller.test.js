@@ -33,6 +33,9 @@ function harness(overrides = {}) {
     },
     tray: { setState: (s) => states.push(s) },
     getApiKey: overrides.getApiKey || (() => "key"),
+    getGoogleApiKey: overrides.getGoogleApiKey || (() => "google-key"),
+    googleTranscribe: overrides.googleTranscribe || (async () => "google-text"),
+    googleSummarize: overrides.googleSummarize || (async () => "google-summary"),
     getConfig:
       overrides.getConfig ||
       (() => ({
@@ -436,5 +439,182 @@ describe("Controller", () => {
     await new Promise((r) => setTimeout(r, 0));
 
     expect(h.typed).toEqual(["text"]);
+  });
+
+  it("dispatches to googleTranscribe when provider is google", async () => {
+    let googleCalled = false;
+    const h = harness({
+      getConfig: () => ({
+        model: "voxtral-mini-latest",
+        language: "auto",
+        summaryModel: "mistral-small-latest",
+        summaryPrompt: "Be terse.",
+        separator: "blank-line",
+        transcriptionProvider: "google",
+      }),
+      googleTranscribe: async () => {
+        googleCalled = true;
+        return "google text";
+      },
+      transcribe: async () => {
+        throw new Error("should not call mistral");
+      },
+    });
+    h.controller.start();
+    h.fireWav(wavOfMs(1000));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(googleCalled).toBe(true);
+    expect(h.typed).toEqual(["google text"]);
+  });
+
+  it("dispatches to both providers in both mode and types both results with labels", async () => {
+    const h = harness({
+      getConfig: () => ({
+        model: "voxtral-mini-latest",
+        language: "auto",
+        summaryModel: "mistral-small-latest",
+        summaryPrompt: "Be terse.",
+        separator: "blank-line",
+        transcriptionProvider: "both",
+      }),
+      transcribe: async () => "mistral text",
+      googleTranscribe: async () => "google text",
+    });
+    h.controller.start();
+    h.fireWav(wavOfMs(1000));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(h.typed).toEqual([{
+      parts: ["[Mistral]\nmistral text", "[Google]\ngoogle text"],
+      separator: "blank-line",
+    }]);
+  });
+
+  it("types the surviving result and notifies when one provider fails in both mode", async () => {
+    const h = harness({
+      getConfig: () => ({
+        model: "voxtral-mini-latest",
+        language: "auto",
+        summaryModel: "mistral-small-latest",
+        summaryPrompt: "Be terse.",
+        separator: "blank-line",
+        transcriptionProvider: "both",
+      }),
+      transcribe: async () => {
+        throw new Error("mistral down");
+      },
+      googleTranscribe: async () => "google text",
+    });
+    h.controller.start();
+    h.fireWav(wavOfMs(1000));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(h.typed).toEqual(["[Google]\ngoogle text"]);
+    expect(h.notifications.some((n) => n[1].includes("Mistral"))).toBe(true);
+  });
+
+  it("shows error when both providers fail in both mode", async () => {
+    const h = harness({
+      getConfig: () => ({
+        model: "voxtral-mini-latest",
+        language: "auto",
+        summaryModel: "mistral-small-latest",
+        summaryPrompt: "Be terse.",
+        separator: "blank-line",
+        transcriptionProvider: "both",
+      }),
+      transcribe: async () => {
+        throw new TranscriberError("UNAUTHORIZED", "bad key");
+      },
+      googleTranscribe: async () => {
+        throw new Error("google down");
+      },
+    });
+    h.controller.start();
+    h.fireWav(wavOfMs(1000));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(h.typed).toEqual([]);
+    expect(h.states).toContain("error");
+    expect(h.notifications.length).toBeGreaterThan(0);
+  });
+
+  it("dispatches summary to googleSummarize when summaryModel has google/ prefix", async () => {
+    let googleSummarizeCalled = false;
+    let capturedModel;
+    const h = harness({
+      getConfig: () => ({
+        model: "voxtral-mini-latest",
+        language: "auto",
+        summaryModel: "google/gemini-3.7-flash",
+        summaryPrompt: "Be terse.",
+        separator: "blank-line",
+        transcriptionProvider: "mistral",
+      }),
+      googleSummarize: async (text, opts) => {
+        googleSummarizeCalled = true;
+        capturedModel = opts.model;
+        return "google summary";
+      },
+      summarize: async () => {
+        throw new Error("should not call mistral summarize");
+      },
+    });
+    h.controller.start();
+    h.hotkey.emit("record-start");
+    h.advance(1200);
+    h.hotkey.emit("record-stop", { mode: "summary" });
+    h.fireWav(wavOfMs(1000));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(googleSummarizeCalled).toBe(true);
+    expect(capturedModel).toBe("gemini-3.7-flash");
+    expect(h.typed).toEqual([{ parts: ["text", "google summary"], separator: "blank-line" }]);
+  });
+
+  it("dispatches summary to mistral when summaryModel has mistral/ prefix", async () => {
+    let capturedModel;
+    const h = harness({
+      getConfig: () => ({
+        model: "voxtral-mini-latest",
+        language: "auto",
+        summaryModel: "mistral/mistral-large-latest",
+        summaryPrompt: "Be terse.",
+        separator: "blank-line",
+        transcriptionProvider: "mistral",
+      }),
+      summarize: async (text, opts) => {
+        capturedModel = opts.model;
+        return "mistral summary";
+      },
+    });
+    h.controller.start();
+    h.hotkey.emit("record-start");
+    h.advance(1200);
+    h.hotkey.emit("record-stop", { mode: "summary" });
+    h.fireWav(wavOfMs(1000));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(capturedModel).toBe("mistral-large-latest");
+  });
+
+  it("dispatches summary to mistral when summaryModel has no prefix", async () => {
+    let mistralCalled = false;
+    const h = harness({
+      getConfig: () => ({
+        model: "voxtral-mini-latest",
+        language: "auto",
+        summaryModel: "mistral-small-latest",
+        summaryPrompt: "Be terse.",
+        separator: "blank-line",
+        transcriptionProvider: "mistral",
+      }),
+      summarize: async () => {
+        mistralCalled = true;
+        return "s";
+      },
+    });
+    h.controller.start();
+    h.hotkey.emit("record-start");
+    h.advance(1200);
+    h.hotkey.emit("record-stop", { mode: "summary" });
+    h.fireWav(wavOfMs(1000));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(mistralCalled).toBe(true);
   });
 });
