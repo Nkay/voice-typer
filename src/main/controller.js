@@ -57,7 +57,13 @@ class Controller {
 
   _idle() {
     if (this.paused) return this._setState("paused");
-    this._setState(this.getApiKey() ? "active" : "error");
+    const cfg = this.getConfig();
+    const provider = cfg.transcriptionProvider || "mistral";
+    const needsMistral = provider === "mistral" || provider === "both";
+    const needsGoogle = provider === "google" || provider === "both";
+    const hasRequiredKeys =
+      (!needsMistral || this.getApiKey()) && (!needsGoogle || this.getGoogleApiKey());
+    this._setState(hasRequiredKeys ? "active" : "error");
   }
 
   _setState(state) {
@@ -67,8 +73,17 @@ class Controller {
 
   _onStart() {
     if (this.paused) return;
-    if (!this.getApiKey()) {
+    const cfg = this.getConfig();
+    const provider = cfg.transcriptionProvider || "mistral";
+    const needsMistral = provider === "mistral" || provider === "both";
+    const needsGoogle = provider === "google" || provider === "both";
+    if (needsMistral && !this.getApiKey()) {
       this.notify("VoiceTyper", "Set your Mistral API key in Settings");
+      this._setState("error");
+      return;
+    }
+    if (needsGoogle && !this.getGoogleApiKey()) {
+      this.notify("VoiceTyper", "Set your Google API key in Settings");
       this._setState("error");
       return;
     }
@@ -214,9 +229,13 @@ class Controller {
   _errorMessage(err) {
     switch (err && err.code) {
       case "NO_API_KEY":
-        return "Set your Mistral API key in Settings";
+        return err.name === "GoogleError"
+          ? "Set your Google API key in Settings"
+          : "Set your Mistral API key in Settings";
       case "UNAUTHORIZED":
-        return "Invalid Mistral API key";
+        return err.name === "GoogleError"
+          ? "Invalid Google API key"
+          : "Invalid Mistral API key";
       case "RATE_LIMIT":
         return "Rate limited — try again";
       case "NETWORK":
