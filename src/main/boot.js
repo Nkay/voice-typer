@@ -11,6 +11,9 @@ const { createRecorderBridge } = require("./recorderBridge.js");
 const { Controller } = require("./controller.js");
 const { summarize } = require("../shared/summarizer.js");
 const { fetchChatModels: defaultFetchChatModels } = require("../shared/models.js");
+const { transcribe: googleTranscribe } = require("../shared/google-transcriber.js");
+const { summarize: googleSummarize } = require("../shared/google-summarizer.js");
+const { fetchGeminiModels: defaultFetchGeminiModels } = require("../shared/google-models.js");
 const { KEYS } = require("../shared/keys.js");
 
 // All Electron and native-module surfaces are injected so the wiring can be
@@ -28,6 +31,7 @@ function boot({
   keyboard,
   Key,
   fetchChatModels = defaultFetchChatModels,
+  fetchGeminiModels = defaultFetchGeminiModels,
 }) {
   // Slow the synthetic typing slightly so target apps keep up.
   keyboard.config.autoDelayMs = 2;
@@ -47,21 +51,43 @@ function boot({
   // changes. A failure is recorded as a message, never thrown: the app must boot
   // and record without a model list.
   const refreshModels = async () => {
-    if (!state.secrets || !state.secrets.hasKey()) {
+    const hasMistral = state.secrets.hasKey();
+    const hasGoogle = state.secrets.hasGoogleKey();
+
+    if (!hasMistral && !hasGoogle) {
       state.models = null;
       state.modelsError = null;
       return;
     }
-    try {
-      state.models = await fetchChatModels({ apiKey: state.secrets.getKey() });
-      state.modelsError = null;
-    } catch (err) {
-      state.models = null;
-      state.modelsError = err && err.message ? err.message : "Could not load model list";
-      // Don't memoize a failure forever: any awaiters already hold this promise
-      // object, so clearing the field is safe, and it lets the next
-      // settings:get (or another refreshModels() call) start a fresh attempt
-      // instead of replaying a stale rejection for the rest of the process.
+
+    const results = await Promise.allSettled([
+      hasMistral
+        ? fetchChatModels({ apiKey: state.secrets.getKey() })
+        : Promise.resolve([]),
+      hasGoogle
+        ? fetchGeminiModels({ apiKey: state.secrets.getGoogleKey() })
+        : Promise.resolve([]),
+    ]);
+
+    const mistralModels = results[0].status === "fulfilled" ? results[0].value : [];
+    const googleModels = results[1].status === "fulfilled" ? results[1].value : [];
+    const errors = [];
+    if (results[0].status === "rejected" && hasMistral) {
+      errors.push(`Mistral: ${results[0].reason?.message || "failed"}`);
+    }
+    if (results[1].status === "rejected" && hasGoogle) {
+      errors.push(`Google: ${results[1].reason?.message || "failed"}`);
+    }
+
+    const merged = [
+      ...mistralModels.map((id) => `mistral/${id}`),
+      ...googleModels.map((id) => `google/${id}`),
+    ].sort();
+
+    state.models = merged.length > 0 ? merged : null;
+    state.modelsError = errors.length > 0 ? errors.join("; ") : null;
+
+    if (errors.length > 0) {
       state.modelsPromise = null;
     }
   };
@@ -111,9 +137,10 @@ function boot({
     const keyPath = path.join(userData, "key.enc");
 
     state.config = configModule.loadConfig(configPath);
-    state.secrets = createSecrets({ safeStorage, filePath: keyPath });
+    const googleKeyPath = path.join(userData, "google-key.enc");
+    state.secrets = createSecrets({ safeStorage, filePath: keyPath, googleFilePath: googleKeyPath });
 
-    if (state.secrets.hasKey()) {
+    if (state.secrets.hasKey() || state.secrets.hasGoogleKey()) {
       state.modelsPromise = refreshModels();
     }
 
@@ -162,10 +189,13 @@ function boot({
       hotkey: state.hotkey,
       recorder,
       transcribe,
+      googleTranscribe,
       summarize,
+      googleSummarize,
       typer,
       tray: state.tray,
       getApiKey: () => state.secrets.getKey(),
+      getGoogleApiKey: () => state.secrets.getGoogleKey(),
       getConfig: () => state.config,
       notify,
       minDurationMs: 200,
@@ -174,23 +204,24 @@ function boot({
     });
     state.controller.start();
 
-    if (!state.secrets.hasKey()) {
-      notify("VoiceTyper", "Set your Mistral API key in Settings (tray icon → Settings).");
+    if (!state.secrets.hasKey() && !state.secrets.hasGoogleKey()) {
+      notify("VoiceTyper", "Set your API key in Settings (tray icon → Settings).");
     }
 
     // --- Settings IPC ---
     ipcMain.handle("settings:get", async () => {
-      if (state.secrets.hasKey()) await modelsReady();
+      if (state.secrets.hasKey() || state.secrets.hasGoogleKey()) await modelsReady();
       return {
         config: state.config,
         hasKey: state.secrets.hasKey(),
+        hasGoogleKey: state.secrets.hasGoogleKey(),
         keys: KEYS,
         models: state.models,
         modelsError: state.modelsError,
       };
     });
 
-    ipcMain.handle("settings:save", async (_e, { config, apiKey }) => {
+    ipcMain.handle("settings:save", async (_e, { config, apiKey, googleApiKey }) => {
       const candidate = configModule.mergeConfig(config);
       // mergeConfig silently disables an invalid modifier; re-check the raw
       // input so the user is told why rather than finding the summary
@@ -201,11 +232,23 @@ function boot({
       );
       if (modifierError) return { ok: false, error: modifierError };
 
+      // Validate provider/key requirements
+      const googleKeyChanged = typeof googleApiKey === "string" && googleApiKey.length > 0;
+      const willHaveGoogleKey = googleKeyChanged || state.secrets.hasGoogleKey();
+      const needsGoogle = candidate.transcriptionProvider === "google" || candidate.transcriptionProvider === "both";
+      if (needsGoogle && !willHaveGoogleKey) {
+        return { ok: false, error: "Google API key is required for this transcription provider." };
+      }
+      if (candidate.summaryModel.startsWith("google/") && !willHaveGoogleKey) {
+        return { ok: false, error: "Google API key is required for this summary model." };
+      }
+
       state.config = candidate;
       configModule.saveConfig(configPath, state.config);
 
       const keyChanged = typeof apiKey === "string" && apiKey.length > 0;
       if (keyChanged) state.secrets.setKey(apiKey);
+      if (googleKeyChanged) state.secrets.setGoogleKey(googleApiKey);
 
       app.setLoginItemSettings({ openAtLogin: state.config.autoLaunch });
       state.hotkey.setBindings({
@@ -214,7 +257,7 @@ function boot({
       });
       state.controller.refreshKeyState();
 
-      if (keyChanged) {
+      if (keyChanged || googleKeyChanged) {
         state.modelsPromise = refreshModels();
         await state.modelsPromise;
       }

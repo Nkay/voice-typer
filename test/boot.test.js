@@ -85,6 +85,7 @@ function fakeDeps() {
     keyboard: { config: {} },
     Key: { LeftShift: "LeftShift", Enter: "Enter" },
     fetchChatModels: async () => ["mistral-large-latest", "mistral-small-latest"],
+    fetchGeminiModels: async () => ["gemini-2.5-flash", "gemini-3.7-flash"],
   };
   return { deps, captured };
 }
@@ -229,7 +230,7 @@ describe("boot wiring", () => {
     });
 
     expect(result.ok).toBe(true);
-    expect(result.models).toEqual(["mistral-large-latest", "mistral-small-latest"]);
+    expect(result.models).toEqual(["mistral/mistral-large-latest", "mistral/mistral-small-latest"]);
     expect(result.modelsError).toBeNull();
   });
 
@@ -282,7 +283,7 @@ describe("boot wiring", () => {
     const result = await pending;
 
     expect(fetchCalls).toBe(1);
-    expect(result.models).toEqual(["mistral-large-latest", "mistral-small-latest"]);
+    expect(result.models).toEqual(["mistral/mistral-large-latest", "mistral/mistral-small-latest"]);
     expect(result.modelsError).toBeNull();
   });
 
@@ -305,7 +306,116 @@ describe("boot wiring", () => {
     const result = await captured.handlers["settings:get"]();
 
     expect(calls).toBe(2);
-    expect(result.models).toEqual(["mistral-large-latest"]);
+    expect(result.models).toEqual(["mistral/mistral-large-latest"]);
     expect(result.modelsError).toBeNull();
+  });
+
+  it("settings:get returns hasGoogleKey", async () => {
+    const { deps, captured } = fakeDeps();
+    boot(deps);
+    captured.readyCb();
+
+    const result = await captured.handlers["settings:get"]();
+    expect("hasGoogleKey" in result).toBe(true);
+    expect(result.hasGoogleKey).toBe(false);
+  });
+
+  it("settings:get returns merged models with provider prefixes", async () => {
+    const { deps, captured } = fakeDeps();
+    fs.writeFileSync(path.join(captured.userDataDir, "key.enc"), Buffer.from("mistral-key"));
+    fs.writeFileSync(path.join(captured.userDataDir, "google-key.enc"), Buffer.from("google-key"));
+    boot(deps);
+    captured.readyCb();
+
+    const result = await captured.handlers["settings:get"]();
+    expect(result.models).toContain("mistral/mistral-large-latest");
+    expect(result.models).toContain("mistral/mistral-small-latest");
+    expect(result.models).toContain("google/gemini-2.5-flash");
+    expect(result.models).toContain("google/gemini-3.7-flash");
+  });
+
+  it("settings:save stores the Google API key", async () => {
+    const { deps, captured } = fakeDeps();
+    boot(deps);
+    captured.readyCb();
+
+    const result = await captured.handlers["settings:save"](null, {
+      config: { recordKey: "RIGHT ALT", summaryModifier: "F13" },
+      apiKey: "",
+      googleApiKey: "goog-test-key",
+    });
+    expect(result.ok).toBe(true);
+
+    const after = await captured.handlers["settings:get"]();
+    expect(after.hasGoogleKey).toBe(true);
+  });
+
+  it("settings:save rejects google/both provider without a Google key", async () => {
+    const { deps, captured } = fakeDeps();
+    boot(deps);
+    captured.readyCb();
+
+    const result = await captured.handlers["settings:save"](null, {
+      config: { recordKey: "RIGHT ALT", summaryModifier: "F13", transcriptionProvider: "google" },
+      apiKey: "",
+      googleApiKey: "",
+    });
+    expect(result.ok).toBe(false);
+    expect(result.error).toMatch(/Google API key/i);
+  });
+
+  it("settings:save rejects google/ summary model without a Google key", async () => {
+    const { deps, captured } = fakeDeps();
+    fs.writeFileSync(path.join(captured.userDataDir, "key.enc"), Buffer.from("mistral-key"));
+    boot(deps);
+    captured.readyCb();
+
+    const result = await captured.handlers["settings:save"](null, {
+      config: {
+        recordKey: "RIGHT ALT",
+        summaryModifier: "F13",
+        transcriptionProvider: "mistral",
+        summaryModel: "google/gemini-3.7-flash",
+      },
+      apiKey: "",
+      googleApiKey: "",
+    });
+    expect(result.ok).toBe(false);
+    expect(result.error).toMatch(/Google API key/i);
+  });
+
+  it("settings:save accepts google provider when Google key exists", async () => {
+    const { deps, captured } = fakeDeps();
+    fs.writeFileSync(path.join(captured.userDataDir, "google-key.enc"), Buffer.from("gk"));
+    boot(deps);
+    captured.readyCb();
+
+    const result = await captured.handlers["settings:save"](null, {
+      config: { recordKey: "RIGHT ALT", summaryModifier: "F13", transcriptionProvider: "google" },
+      apiKey: "",
+      googleApiKey: "",
+    });
+    expect(result.ok).toBe(true);
+    expect(result.models).toBeDefined();
+  });
+
+  it("fetches models from both providers when both keys exist", async () => {
+    const { deps, captured } = fakeDeps();
+    fs.writeFileSync(path.join(captured.userDataDir, "key.enc"), Buffer.from("mk"));
+    fs.writeFileSync(path.join(captured.userDataDir, "google-key.enc"), Buffer.from("gk"));
+
+    let mistralCalls = 0;
+    let googleCalls = 0;
+    deps.fetchChatModels = async () => { mistralCalls++; return ["mistral-small-latest"]; };
+    deps.fetchGeminiModels = async () => { googleCalls++; return ["gemini-3.7-flash"]; };
+
+    boot(deps);
+    captured.readyCb();
+
+    const result = await captured.handlers["settings:get"]();
+    expect(mistralCalls).toBe(1);
+    expect(googleCalls).toBe(1);
+    expect(result.models).toContain("mistral/mistral-small-latest");
+    expect(result.models).toContain("google/gemini-3.7-flash");
   });
 });
