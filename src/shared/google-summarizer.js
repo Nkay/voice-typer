@@ -39,7 +39,7 @@ async function summarize(transcript, opts = {}) {
       continue;
     }
 
-    if (!res.ok) throw errorForStatus(res.status);
+    if (!res.ok) throw errorForStatus(res.status, await res.json().catch(() => null));
 
     let data;
     try {

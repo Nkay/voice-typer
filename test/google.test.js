@@ -22,6 +22,49 @@ describe("google shared", () => {
     expect(errorForStatus(500).message).toBe("HTTP 500");
   });
 
+  // A wrong Google key answers 400/INVALID_ARGUMENT, not 401 — verified against
+  // the live API. Without reading the body a typo'd key reads as a generic
+  // failure, which tells the user nothing about what to fix.
+  it("recognises an invalid API key behind a 400", () => {
+    const body = {
+      error: {
+        code: 400,
+        message: "API key not valid. Please pass a valid API key.",
+        status: "INVALID_ARGUMENT",
+        details: [{ reason: "API_KEY_INVALID", domain: "googleapis.com" }],
+      },
+    };
+    const err = errorForStatus(400, body);
+    expect(err.code).toBe("UNAUTHORIZED");
+    expect(err.message).toMatch(/Google API key/i);
+  });
+
+  // /interactions returns its errors wrapped in an array, /models does not.
+  // Verified against the live API — the array shape is what the transcription
+  // path actually receives.
+  it("recognises an invalid API key inside an array-wrapped error body", () => {
+    const body = [
+      {
+        error: {
+          code: 400,
+          message: "API key not valid. Please pass a valid API key.",
+          status: "INVALID_ARGUMENT",
+          details: [{ reason: "API_KEY_INVALID" }],
+        },
+      },
+    ];
+    expect(errorForStatus(400, body).code).toBe("UNAUTHORIZED");
+  });
+
+  it("leaves other 400s as generic HTTP errors", () => {
+    const body = {
+      error: { code: 400, message: "Invalid enum value 'nonsense'", status: "INVALID_ARGUMENT" },
+    };
+    expect(errorForStatus(400, body).code).toBe("HTTP");
+    expect(errorForStatus(400, null).code).toBe("HTTP");
+    expect(errorForStatus(400).code).toBe("HTTP");
+  });
+
   it("passes url and options through and returns the response", async () => {
     let captured;
     const fetchImpl = async (url, init) => {

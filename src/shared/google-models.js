@@ -16,7 +16,7 @@ async function fetchGeminiModels({ apiKey, fetchImpl = fetch, timeoutMs = 10000 
     throw new GoogleError("NETWORK", `Network error: ${err.message}`);
   }
 
-  if (!res.ok) throw errorForStatus(res.status);
+  if (!res.ok) throw errorForStatus(res.status, await res.json().catch(() => null));
 
   let data;
   try {
