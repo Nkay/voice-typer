@@ -1,49 +1,14 @@
 const { GEMINI_API_BASE, GoogleError, errorForStatus, fetchWithTimeout } = require("./google.js");
 
-const UPLOAD_ENDPOINT = `${GEMINI_API_BASE}/upload/v1beta/files`;
 const INTERACTIONS_ENDPOINT = `${GEMINI_API_BASE}/interactions`;
 
-async function uploadFile(wavBytes, { apiKey, fetchImpl, timeoutMs }) {
-  const metadata = JSON.stringify({ file: { display_name: "audio.wav" } });
-  const boundary = "----VoiceTyperBoundary";
-  const parts = [
-    `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${metadata}\r\n`,
-    `--${boundary}\r\nContent-Type: audio/wav\r\n\r\n`,
-  ];
-  const encoder = new TextEncoder();
-  const head = encoder.encode(parts[0] + parts[1]);
-  const tail = encoder.encode(`\r\n--${boundary}--\r\n`);
-  const body = new Uint8Array(head.length + wavBytes.length + tail.length);
-  body.set(head, 0);
-  body.set(wavBytes, head.length);
-  body.set(tail, head.length + wavBytes.length);
-
-  const res = await fetchWithTimeout(
-    UPLOAD_ENDPOINT,
-    {
-      method: "POST",
-      headers: {
-        "x-goog-api-key": apiKey,
-        "Content-Type": `multipart/related; boundary=${boundary}`,
-      },
-      body,
-    },
-    { fetchImpl, timeoutMs }
-  );
-
-  if (!res.ok) throw errorForStatus(res.status);
-
-  let data;
-  try {
-    data = await res.json();
-  } catch {
-    throw new GoogleError("BAD_RESPONSE", "Malformed response from Files API");
-  }
-  if (!data || !data.file || !data.file.uri) {
-    throw new GoogleError("BAD_RESPONSE", "Missing file URI in upload response");
-  }
-  return { uri: data.file.uri, mimeType: data.file.mimeType || "audio/wav" };
-}
+// The audio rides along inside the request as base64 rather than being staged
+// through the Files API: a push-to-talk dictation is seconds long, so one
+// request beats three, and nothing is left sitting in Google's file store.
+// Inline requests are capped at 20 MB total; base64 inflates by 4/3, so the raw
+// WAV ceiling is set below that to leave room for the envelope. At the app's
+// 16 kHz mono 16-bit capture (32 kB/s) this is roughly seven minutes of speech.
+const MAX_INLINE_WAV_BYTES = 14 * 1024 * 1024;
 
 async function transcribe(wavBytes, opts = {}) {
   const {
@@ -56,31 +21,29 @@ async function transcribe(wavBytes, opts = {}) {
   } = opts;
 
   if (!apiKey) throw new GoogleError("NO_API_KEY", "No Google API key configured");
+  if (wavBytes.length > MAX_INLINE_WAV_BYTES) {
+    throw new GoogleError("TOO_LARGE", "Recording too long for Google transcription");
+  }
+
+  const transcriptionConfig = { mode: "smart" };
+  if (language && language !== "auto") {
+    transcriptionConfig.language_codes = [language];
+  }
+
+  const body = JSON.stringify({
+    model,
+    input: [
+      {
+        type: "audio",
+        data: Buffer.from(wavBytes).toString("base64"),
+        mime_type: "audio/wav",
+      },
+    ],
+    generation_config: { transcription_config: transcriptionConfig },
+  });
 
   let lastNetworkError;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    let file;
-    try {
-      file = await uploadFile(wavBytes, { apiKey, fetchImpl, timeoutMs });
-    } catch (err) {
-      if (!(err instanceof GoogleError)) {
-        lastNetworkError = new GoogleError("NETWORK", `Network error: ${err.message}`);
-        continue;
-      }
-      throw err;
-    }
-
-    const transcriptionConfig = { mode: "smart" };
-    if (language && language !== "auto") {
-      transcriptionConfig.language_codes = [language];
-    }
-
-    const body = JSON.stringify({
-      model,
-      input: [{ type: "audio", uri: file.uri, mime_type: file.mimeType }],
-      generation_config: { transcription_config: transcriptionConfig },
-    });
-
     let res;
     try {
       res = await fetchWithTimeout(
@@ -100,7 +63,7 @@ async function transcribe(wavBytes, opts = {}) {
       continue;
     }
 
-    if (!res.ok) throw errorForStatus(res.status);
+    if (!res.ok) throw errorForStatus(res.status, await res.json().catch(() => null));
 
     let data;
     try {
@@ -109,7 +72,7 @@ async function transcribe(wavBytes, opts = {}) {
       throw new GoogleError("BAD_RESPONSE", "Malformed response from transcription API");
     }
 
-    const text = data && typeof data.output_text === "string" ? data.output_text.trim() : "";
+    const text = extractText(data);
     if (text.length === 0) throw new GoogleError("BAD_RESPONSE", "Empty transcription from API");
     return text;
   }
@@ -117,4 +80,19 @@ async function transcribe(wavBytes, opts = {}) {
   throw lastNetworkError;
 }
 
-module.exports = { transcribe, UPLOAD_ENDPOINT, INTERACTIONS_ENDPOINT };
+// The REST Interaction resource has no output_text field — that exists only on
+// the SDK objects. The transcript is assembled from the model_output step's
+// text blocks, skipping any other step type (thoughts, tool calls) and any
+// non-text content.
+function extractText(data) {
+  if (!data || !Array.isArray(data.steps)) return "";
+  return data.steps
+    .filter((step) => step && step.type === "model_output" && Array.isArray(step.content))
+    .flatMap((step) => step.content)
+    .filter((block) => block && block.type === "text" && typeof block.text === "string")
+    .map((block) => block.text)
+    .join("")
+    .trim();
+}
+
+module.exports = { transcribe, INTERACTIONS_ENDPOINT, MAX_INLINE_WAV_BYTES };

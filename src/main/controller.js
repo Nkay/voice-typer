@@ -238,6 +238,10 @@ class Controller {
           : "Invalid Mistral API key";
       case "RATE_LIMIT":
         return "Rate limited — try again";
+      // Google audio is sent inline, which the API caps by request size. Only
+      // a very long dictation can trip this, so say what to do about it.
+      case "TOO_LARGE":
+        return "Recording too long for Google — try a shorter dictation";
       case "NETWORK":
         return "Network error — check your connection";
       default:

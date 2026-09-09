@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import EventEmitter from "events";
 import { Controller } from "../src/main/controller.js";
 import { TranscriberError } from "../src/shared/transcriber.js";
+import { GoogleError } from "../src/shared/google.js";
 
 function wavOfMs(ms, sampleRate = 16000) {
   const samples = Math.round((ms / 1000) * sampleRate);
@@ -106,6 +107,15 @@ describe("Controller", () => {
     await new Promise((r) => setTimeout(r, 0));
     expect(h.states).toContain("error");
     expect(h.notifications.length).toBe(1);
+  });
+
+  it("names the cause when a recording is too long for inline Google audio", async () => {
+    const tooLarge = new GoogleError("TOO_LARGE", "Recording too long for Google transcription");
+    const h = harness({ transcribe: async () => { throw tooLarge; } });
+    h.controller.start();
+    h.fireWav(wavOfMs(1000));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(h.notifications[0][1]).toMatch(/too long/i);
   });
 
   it("processes queued clips in FIFO order", async () => {
