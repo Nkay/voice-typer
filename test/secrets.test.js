@@ -103,4 +103,23 @@ describe("dual key support", () => {
     expect(s.hasGoogleKey()).toBe(false);
     expect(s.getGoogleKey()).toBe(null);
   });
+
+  it("keeps the Microsoft key in its own file", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "vt-sec-"));
+    const s = createSecrets({
+      safeStorage: fakeSafeStorage,
+      filePath: path.join(dir, "key.enc"),
+      googleFilePath: path.join(dir, "google-key.enc"),
+      microsoftFilePath: path.join(dir, "microsoft-key.enc"),
+      fs,
+    });
+    expect(s.hasMicrosoftKey()).toBe(false);
+    s.setMicrosoftKey("ms-secret");
+    expect(s.hasMicrosoftKey()).toBe(true);
+    expect(s.getMicrosoftKey()).toBe("ms-secret");
+    expect(s.hasKey()).toBe(false);
+    expect(s.hasGoogleKey()).toBe(false);
+    s.setMicrosoftKey("");
+    expect(s.hasMicrosoftKey()).toBe(false);
+  });
 });

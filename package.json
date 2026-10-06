@@ -17,7 +17,8 @@
   },
   "dependencies": {
     "@nut-tree-fork/nut-js": "^4.2.0",
-    "koffi": "^2.16.2"
+    "koffi": "^2.16.2",
+    "ws": "^8.22.0"
   },
   "devDependencies": {
     "electron": "^31.0.0",

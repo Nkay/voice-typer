@@ -14,6 +14,9 @@ const { fetchChatModels: defaultFetchChatModels } = require("../shared/models.js
 const { transcribe: googleTranscribe } = require("../shared/google-transcriber.js");
 const { summarize: googleSummarize } = require("../shared/google-summarizer.js");
 const { fetchGeminiModels: defaultFetchGeminiModels } = require("../shared/google-models.js");
+const { openStream: defaultOpenMicrosoftStream } = require("../shared/microsoft-streamer.js");
+const { transcribe: microsoftTranscribe } = require("../shared/microsoft-transcriber.js");
+const { normalizeEndpoint } = require("../shared/microsoft.js");
 const { KEYS } = require("../shared/keys.js");
 
 // All Electron and native-module surfaces are injected so the wiring can be
@@ -32,6 +35,10 @@ function boot({
   Key,
   fetchChatModels = defaultFetchChatModels,
   fetchGeminiModels = defaultFetchGeminiModels,
+  openMicrosoftStream = defaultOpenMicrosoftStream,
+  // True while Shift, Ctrl, Alt/AltGr or Win is physically down; typing waits.
+  isModifierDown = () => false,
+  clipboard = null,
 }) {
   // Slow the synthetic typing slightly so target apps keep up.
   keyboard.config.autoDelayMs = 2;
@@ -138,7 +145,13 @@ function boot({
 
     state.config = configModule.loadConfig(configPath);
     const googleKeyPath = path.join(userData, "google-key.enc");
-    state.secrets = createSecrets({ safeStorage, filePath: keyPath, googleFilePath: googleKeyPath });
+    const microsoftKeyPath = path.join(userData, "microsoft-key.enc");
+    state.secrets = createSecrets({
+      safeStorage,
+      filePath: keyPath,
+      googleFilePath: googleKeyPath,
+      microsoftFilePath: microsoftKeyPath,
+    });
 
     if (state.secrets.hasKey() || state.secrets.hasGoogleKey()) {
       state.modelsPromise = refreshModels();
@@ -154,8 +167,11 @@ function boot({
       // Renderer needs the currently-configured mic each time capture starts.
       getStartOpts: () => ({ micDeviceId: state.config.micDeviceId }),
     });
-    ipcMain.on("capture:pcm", (_e, arrayBuffer, sampleRate) =>
-      recorder.handlePcm(arrayBuffer, sampleRate)
+    ipcMain.on("capture:pcm", (_e, arrayBuffer, sampleRate, captureId) =>
+      recorder.handlePcm(arrayBuffer, sampleRate, captureId)
+    );
+    ipcMain.on("capture:chunk", (_e, arrayBuffer, sampleRate, captureId) =>
+      recorder.handleChunk(arrayBuffer, sampleRate, captureId)
     );
 
     state.hotkey = new Hotkey({
@@ -170,7 +186,13 @@ function boot({
       notify("VoiceTyper", "Hotkey listener failed to start — recording is disabled.");
     }
 
-    const typer = createTyper({ keyboard, Key });
+    const typer = createTyper({
+      keyboard,
+      Key,
+      isModifierDown,
+      // Holding the record key (often AltGr) while live text waits is normal.
+      isHoldActive: () => Boolean(state.controller && state.controller.isRecording()),
+    });
 
     state.tray = createTray({
       Tray,
@@ -196,6 +218,10 @@ function boot({
       tray: state.tray,
       getApiKey: () => state.secrets.getKey(),
       getGoogleApiKey: () => state.secrets.getGoogleKey(),
+      getMicrosoftApiKey: () => state.secrets.getMicrosoftKey(),
+      openMicrosoftStream,
+      microsoftTranscribe,
+      copyToClipboard: clipboard ? (text) => clipboard.writeText(text) : null,
       getConfig: () => state.config,
       notify,
       minDurationMs: 200,
@@ -204,7 +230,7 @@ function boot({
     });
     state.controller.start();
 
-    if (!state.secrets.hasKey() && !state.secrets.hasGoogleKey()) {
+    if (!state.secrets.hasKey() && !state.secrets.hasGoogleKey() && !state.secrets.hasMicrosoftKey()) {
       notify("VoiceTyper", "Set your API key in Settings (tray icon → Settings).");
     }
 
@@ -215,13 +241,14 @@ function boot({
         config: state.config,
         hasKey: state.secrets.hasKey(),
         hasGoogleKey: state.secrets.hasGoogleKey(),
+        hasMicrosoftKey: state.secrets.hasMicrosoftKey(),
         keys: KEYS,
         models: state.models,
         modelsError: state.modelsError,
       };
     });
 
-    ipcMain.handle("settings:save", async (_e, { config, apiKey, googleApiKey }) => {
+    ipcMain.handle("settings:save", async (_e, { config, apiKey, googleApiKey, microsoftApiKey }) => {
       const candidate = configModule.mergeConfig(config);
       // mergeConfig silently disables an invalid modifier; re-check the raw
       // input so the user is told why rather than finding the summary
@@ -232,12 +259,34 @@ function boot({
       );
       if (modifierError) return { ok: false, error: modifierError };
 
-      // Validate provider/key requirements
+      // mergeConfig falls back to Mistral when no model is checked.
+      if (config && Array.isArray(config.transcriptionModels) && config.transcriptionModels.length === 0) {
+        return { ok: false, error: "Select at least one transcription model." };
+      }
+
+      // Validate model/key requirements
       const googleKeyChanged = typeof googleApiKey === "string" && googleApiKey.length > 0;
       const willHaveGoogleKey = googleKeyChanged || state.secrets.hasGoogleKey();
-      const needsGoogle = candidate.transcriptionProvider === "google" || candidate.transcriptionProvider === "both";
-      if (needsGoogle && !willHaveGoogleKey) {
-        return { ok: false, error: "Google API key is required for this transcription provider." };
+      const needs = candidate.transcriptionModels;
+      if (needs.includes("google") && !willHaveGoogleKey) {
+        return { ok: false, error: "Google API key is required for the Google transcription model." };
+      }
+
+      const rawEndpoint = config && typeof config.microsoftEndpoint === "string" ? config.microsoftEndpoint.trim() : "";
+      if (rawEndpoint && !normalizeEndpoint(rawEndpoint)) {
+        return {
+          ok: false,
+          error: "Microsoft endpoint must look like https://<resource>.services.ai.azure.com",
+        };
+      }
+      const microsoftKeyChanged = typeof microsoftApiKey === "string" && microsoftApiKey.length > 0;
+      if (needs.includes("microsoft")) {
+        if (!microsoftKeyChanged && !state.secrets.hasMicrosoftKey()) {
+          return { ok: false, error: "Microsoft API key is required for the Microsoft transcription model." };
+        }
+        if (!candidate.microsoftEndpoint) {
+          return { ok: false, error: "Microsoft endpoint is required for the Microsoft transcription model." };
+        }
       }
       if (candidate.summaryModel.startsWith("google/") && !willHaveGoogleKey) {
         return { ok: false, error: "Google API key is required for this summary model." };
@@ -249,6 +298,7 @@ function boot({
       const keyChanged = typeof apiKey === "string" && apiKey.length > 0;
       if (keyChanged) state.secrets.setKey(apiKey);
       if (googleKeyChanged) state.secrets.setGoogleKey(googleApiKey);
+      if (microsoftKeyChanged) state.secrets.setMicrosoftKey(microsoftApiKey);
 
       app.setLoginItemSettings({ openAtLogin: state.config.autoLaunch });
       state.hotkey.setBindings({

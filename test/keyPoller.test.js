@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { createKeyPoller } from "../src/main/keyPoller.js";
+import { createKeyPoller, createModifierProbe } from "../src/main/keyPoller.js";
 import { KEY_NAMES, vkFor } from "../src/shared/keys.js";
 
 const VK = { "RIGHT ALT": 0xa5, "LEFT ALT": 0xa4, "RIGHT CTRL": 0xa3, "LEFT CTRL": 0xa2 };
@@ -197,5 +197,21 @@ describe("createKeyPoller", () => {
       { name: "LEFT CTRL", state: "DOWN" },
       { name: "LEFT CTRL", state: "DOWN" },
     ]);
+  });
+});
+
+describe("createModifierProbe", () => {
+  it("is false when no modifier is down", () => {
+    expect(createModifierProbe(() => false)()).toBe(false);
+  });
+
+  it("is true for Shift, Ctrl, Alt and both Win keys", () => {
+    for (const vk of [0x10, 0x11, 0x12, 0x5b, 0x5c]) {
+      expect(createModifierProbe((v) => v === vk)()).toBe(true);
+    }
+  });
+
+  it("ignores keys that do not change typed characters", () => {
+    expect(createModifierProbe((v) => v === 0x7c /* F13 */ || v === 0x20)()).toBe(false);
   });
 });

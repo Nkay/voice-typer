@@ -22,6 +22,7 @@ function harness(overrides = {}) {
   const typed = [];
   const states = [];
   const notifications = [];
+  const clipboard = [];
   let nowMs = 0;
   const deps = {
     hotkey,
@@ -47,6 +48,7 @@ function harness(overrides = {}) {
         separator: "blank-line",
       })),
     notify: (t, b) => notifications.push([t, b]),
+    copyToClipboard: overrides.copyToClipboard || ((t) => clipboard.push(t)),
     minDurationMs: 200,
     minHoldMs: 1000,
     now: () => nowMs,
@@ -61,9 +63,19 @@ function harness(overrides = {}) {
     typed,
     states,
     notifications,
+    clipboard,
     advance: (ms) => { nowMs += ms; },
   };
 }
+
+const raceConfig = () => ({
+  model: "voxtral-mini-latest",
+  language: "auto",
+  summaryModel: "mistral-small-latest",
+  summaryPrompt: "Be terse.",
+  separator: "blank-line",
+  transcriptionModels: ["mistral", "google"],
+});
 
 describe("Controller", () => {
   it("records on key hold and transcribes+types on a valid clip", async () => {
@@ -451,7 +463,7 @@ describe("Controller", () => {
     expect(h.typed).toEqual(["text"]);
   });
 
-  it("dispatches to googleTranscribe when provider is google", async () => {
+  it("dispatches to googleTranscribe when only Google is checked", async () => {
     let googleCalled = false;
     const h = harness({
       getConfig: () => ({
@@ -460,7 +472,7 @@ describe("Controller", () => {
         summaryModel: "mistral-small-latest",
         summaryPrompt: "Be terse.",
         separator: "blank-line",
-        transcriptionProvider: "google",
+        transcriptionModels: ["google"],
       }),
       googleTranscribe: async () => {
         googleCalled = true;
@@ -477,38 +489,31 @@ describe("Controller", () => {
     expect(h.typed).toEqual(["google text"]);
   });
 
-  it("dispatches to both providers in both mode and types both results with labels", async () => {
+  it("asks all checked models at once and types only the first transcript", async () => {
+    let releaseMistral;
+    let mistralCalled = false;
     const h = harness({
-      getConfig: () => ({
-        model: "voxtral-mini-latest",
-        language: "auto",
-        summaryModel: "mistral-small-latest",
-        summaryPrompt: "Be terse.",
-        separator: "blank-line",
-        transcriptionProvider: "both",
-      }),
-      transcribe: async () => "mistral text",
+      getConfig: raceConfig,
+      transcribe: () => {
+        mistralCalled = true;
+        return new Promise((r) => { releaseMistral = r; });
+      },
       googleTranscribe: async () => "google text",
     });
     h.controller.start();
     h.fireWav(wavOfMs(1000));
     await new Promise((r) => setTimeout(r, 0));
-    expect(h.typed).toEqual([{
-      parts: ["[Mistral]\nmistral text", "[Google]\ngoogle text"],
-      separator: "blank-line",
-    }]);
+    expect(mistralCalled).toBe(true);
+    expect(h.typed).toEqual(["google text"]);
+    releaseMistral("mistral text");
+    await new Promise((r) => setTimeout(r, 0));
+    expect(h.typed).toEqual(["google text"]);
+    expect(h.notifications).toEqual([]);
   });
 
-  it("types the surviving result and notifies when one provider fails in both mode", async () => {
+  it("types the answer of another model when one fails, without a notification", async () => {
     const h = harness({
-      getConfig: () => ({
-        model: "voxtral-mini-latest",
-        language: "auto",
-        summaryModel: "mistral-small-latest",
-        summaryPrompt: "Be terse.",
-        separator: "blank-line",
-        transcriptionProvider: "both",
-      }),
+      getConfig: raceConfig,
       transcribe: async () => {
         throw new Error("mistral down");
       },
@@ -517,25 +522,44 @@ describe("Controller", () => {
     h.controller.start();
     h.fireWav(wavOfMs(1000));
     await new Promise((r) => setTimeout(r, 0));
-    expect(h.typed).toEqual(["[Google]\ngoogle text"]);
-    expect(h.notifications.some((n) => n[1].includes("Mistral"))).toBe(true);
+    expect(h.typed).toEqual(["google text"]);
+    expect(h.notifications).toEqual([]);
   });
 
-  it("shows error when both providers fail in both mode", async () => {
+  it("waits for a real transcript when a faster model hears nothing", async () => {
     const h = harness({
-      getConfig: () => ({
-        model: "voxtral-mini-latest",
-        language: "auto",
-        summaryModel: "mistral-small-latest",
-        summaryPrompt: "Be terse.",
-        separator: "blank-line",
-        transcriptionProvider: "both",
-      }),
+      getConfig: raceConfig,
+      transcribe: () => new Promise((r) => setTimeout(() => r("mistral text"), 5)),
+      googleTranscribe: async () => "",
+    });
+    h.controller.start();
+    h.fireWav(wavOfMs(1000));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(h.typed).toEqual(["mistral text"]);
+  });
+
+  it("types nothing and reports nothing when every model hears nothing", async () => {
+    const h = harness({
+      getConfig: raceConfig,
+      transcribe: async () => "",
+      googleTranscribe: async () => "",
+    });
+    h.controller.start();
+    h.fireWav(wavOfMs(1000));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(h.typed).toEqual([]);
+    expect(h.notifications).toEqual([]);
+    expect(h.states.at(-1)).toBe("active");
+  });
+
+  it("reports the first error when every model fails", async () => {
+    const h = harness({
+      getConfig: raceConfig,
       transcribe: async () => {
         throw new TranscriberError("UNAUTHORIZED", "bad key");
       },
       googleTranscribe: async () => {
-        throw new Error("google down");
+        throw new GoogleError("RATE_LIMIT", "slow down");
       },
     });
     h.controller.start();
@@ -543,7 +567,28 @@ describe("Controller", () => {
     await new Promise((r) => setTimeout(r, 0));
     expect(h.typed).toEqual([]);
     expect(h.states).toContain("error");
-    expect(h.notifications.length).toBeGreaterThan(0);
+    expect(h.notifications).toEqual([["VoiceTyper", "Invalid Mistral API key"]]);
+  });
+
+  it("summarises the winning transcript in summary mode", async () => {
+    let summarized = null;
+    const h = harness({
+      getConfig: raceConfig,
+      transcribe: () => new Promise(() => {}),
+      googleTranscribe: async () => "google text",
+      summarize: async (text) => {
+        summarized = text;
+        return "short";
+      },
+    });
+    h.controller.start();
+    h.hotkey.emit("record-start");
+    h.advance(1200);
+    h.hotkey.emit("record-stop", { mode: "summary" });
+    h.fireWav(wavOfMs(1000));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(summarized).toBe("google text");
+    expect(h.typed).toEqual([{ parts: ["google text", "short"], separator: "blank-line" }]);
   });
 
   it("dispatches summary to googleSummarize when summaryModel has google/ prefix", async () => {
@@ -556,7 +601,7 @@ describe("Controller", () => {
         summaryModel: "google/gemini-3.7-flash",
         summaryPrompt: "Be terse.",
         separator: "blank-line",
-        transcriptionProvider: "mistral",
+        transcriptionModels: ["mistral"],
       }),
       googleSummarize: async (text, opts) => {
         googleSummarizeCalled = true;
@@ -587,7 +632,7 @@ describe("Controller", () => {
         summaryModel: "mistral/mistral-large-latest",
         summaryPrompt: "Be terse.",
         separator: "blank-line",
-        transcriptionProvider: "mistral",
+        transcriptionModels: ["mistral"],
       }),
       summarize: async (text, opts) => {
         capturedModel = opts.model;
@@ -612,7 +657,7 @@ describe("Controller", () => {
         summaryModel: "mistral-small-latest",
         summaryPrompt: "Be terse.",
         separator: "blank-line",
-        transcriptionProvider: "mistral",
+        transcriptionModels: ["mistral"],
       }),
       summarize: async () => {
         mistralCalled = true;
@@ -626,5 +671,125 @@ describe("Controller", () => {
     h.fireWav(wavOfMs(1000));
     await new Promise((r) => setTimeout(r, 0));
     expect(mistralCalled).toBe(true);
+  });
+});
+
+describe("Controller double press", () => {
+  async function dictate(h) {
+    h.hotkey.emit("record-start");
+    h.advance(1200);
+    h.hotkey.emit("record-stop", { mode: "transcript" });
+    h.fireWav(wavOfMs(1200));
+    await new Promise((r) => setTimeout(r, 0));
+  }
+
+  function doublePress(h) {
+    h.advance(1000);
+    h.hotkey.emit("record-start");
+    h.advance(100);
+    h.hotkey.emit("record-stop", { mode: "transcript" });
+    h.fireWav(wavOfMs(100));
+    h.advance(200);
+    h.hotkey.emit("record-start");
+    h.advance(100);
+    h.hotkey.emit("record-stop", { mode: "transcript" });
+  }
+
+  it("copies the transcripts of every model, the slower ones too, and types nothing", async () => {
+    let releaseMistral;
+    const h = harness({
+      getConfig: raceConfig,
+      transcribe: () => new Promise((r) => { releaseMistral = r; }),
+      googleTranscribe: async () => "google text",
+    });
+    h.controller.start();
+    await dictate(h);
+    releaseMistral("mistral text");
+    await new Promise((r) => setTimeout(r, 0));
+
+    doublePress(h);
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(h.clipboard).toEqual(["[Google]\ngoogle text\n\n[Mistral]\nmistral text"]);
+    expect(h.typed).toEqual(["google text"]);
+    expect(h.notifications.at(-1)).toEqual(["VoiceTyper", "2 transcripts copied"]);
+  });
+
+  it("copies a single transcript without a label", async () => {
+    const h = harness();
+    h.controller.start();
+    await dictate(h);
+    doublePress(h);
+    expect(h.clipboard).toEqual(["text"]);
+    expect(h.notifications.at(-1)).toEqual(["VoiceTyper", "Transcript copied"]);
+  });
+
+  it("says so when there is no transcript yet", () => {
+    const h = harness();
+    h.controller.start();
+    doublePress(h);
+    expect(h.clipboard).toEqual([]);
+    expect(h.notifications.at(-1)).toEqual(["VoiceTyper", "No transcript to copy yet"]);
+  });
+
+  it("does not copy again on a third quick tap", async () => {
+    const h = harness();
+    h.controller.start();
+    await dictate(h);
+    doublePress(h);
+    h.advance(200);
+    h.hotkey.emit("record-start");
+    h.advance(100);
+    h.hotkey.emit("record-stop", { mode: "transcript" });
+    expect(h.clipboard).toEqual(["text"]);
+  });
+
+  it("does not copy on a quick tap right after a dictation", async () => {
+    const h = harness();
+    h.controller.start();
+    await dictate(h);
+    h.advance(200);
+    h.hotkey.emit("record-start");
+    h.advance(100);
+    h.hotkey.emit("record-stop", { mode: "transcript" });
+    expect(h.clipboard).toEqual([]);
+  });
+
+  it("says so when the clipboard cannot be written", async () => {
+    const h = harness({
+      copyToClipboard: () => {
+        throw new Error("clipboard busy");
+      },
+    });
+    h.controller.start();
+    await dictate(h);
+    doublePress(h);
+    expect(h.notifications.at(-1)).toEqual(["VoiceTyper", "Could not copy to the clipboard"]);
+  });
+
+  it("records a long press right after a tap", async () => {
+    const h = harness();
+    h.controller.start();
+    h.hotkey.emit("record-start");
+    h.advance(100);
+    h.hotkey.emit("record-stop", { mode: "transcript" });
+    h.fireWav(wavOfMs(100));
+    h.advance(200);
+    await dictate(h);
+    expect(h.clipboard).toEqual([]);
+    expect(h.typed).toEqual(["text"]);
+  });
+
+  it("records normally when the second press comes too late", async () => {
+    const h = harness();
+    h.controller.start();
+    h.hotkey.emit("record-start");
+    h.advance(100);
+    h.hotkey.emit("record-stop", { mode: "transcript" });
+    h.fireWav(wavOfMs(100));
+    h.advance(500);
+    await dictate(h);
+    expect(h.clipboard).toEqual([]);
+    expect(h.typed).toEqual(["text"]);
   });
 });

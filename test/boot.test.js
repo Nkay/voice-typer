@@ -350,13 +350,13 @@ describe("boot wiring", () => {
     expect(after.hasGoogleKey).toBe(true);
   });
 
-  it("settings:save rejects google/both provider without a Google key", async () => {
+  it("settings:save rejects the Google model without a Google key", async () => {
     const { deps, captured } = fakeDeps();
     boot(deps);
     captured.readyCb();
 
     const result = await captured.handlers["settings:save"](null, {
-      config: { recordKey: "RIGHT ALT", summaryModifier: "F13", transcriptionProvider: "google" },
+      config: { recordKey: "RIGHT ALT", summaryModifier: "F13", transcriptionModels: ["google"] },
       apiKey: "",
       googleApiKey: "",
     });
@@ -374,7 +374,7 @@ describe("boot wiring", () => {
       config: {
         recordKey: "RIGHT ALT",
         summaryModifier: "F13",
-        transcriptionProvider: "mistral",
+        transcriptionModels: ["mistral"],
         summaryModel: "google/gemini-3.7-flash",
       },
       apiKey: "",
@@ -384,14 +384,14 @@ describe("boot wiring", () => {
     expect(result.error).toMatch(/Google API key/i);
   });
 
-  it("settings:save accepts google provider when Google key exists", async () => {
+  it("settings:save accepts the Google model when Google key exists", async () => {
     const { deps, captured } = fakeDeps();
     fs.writeFileSync(path.join(captured.userDataDir, "google-key.enc"), Buffer.from("gk"));
     boot(deps);
     captured.readyCb();
 
     const result = await captured.handlers["settings:save"](null, {
-      config: { recordKey: "RIGHT ALT", summaryModifier: "F13", transcriptionProvider: "google" },
+      config: { recordKey: "RIGHT ALT", summaryModifier: "F13", transcriptionModels: ["google"] },
       apiKey: "",
       googleApiKey: "",
     });
@@ -417,5 +417,111 @@ describe("boot wiring", () => {
     expect(googleCalls).toBe(1);
     expect(result.models).toContain("mistral/mistral-small-latest");
     expect(result.models).toContain("google/gemini-3.7-flash");
+  });
+
+  it("settings:save stores the Microsoft key and endpoint for the Microsoft model", async () => {
+    const { deps, captured } = fakeDeps();
+    boot(deps);
+    captured.readyCb();
+
+    const result = await captured.handlers["settings:save"](null, {
+      config: {
+        recordKey: "RIGHT ALT",
+        summaryModifier: "F13",
+        transcriptionModels: ["microsoft"],
+        microsoftEndpoint: "https://res.services.ai.azure.com/",
+      },
+      apiKey: "",
+      googleApiKey: "",
+      microsoftApiKey: "ms-key",
+    });
+    expect(result.ok).toBe(true);
+
+    const after = await captured.handlers["settings:get"]();
+    expect(after.hasMicrosoftKey).toBe(true);
+    expect(after.config.transcriptionModels).toEqual(["microsoft"]);
+    expect(after.config.microsoftEndpoint).toBe("https://res.services.ai.azure.com");
+    expect(fs.existsSync(path.join(captured.userDataDir, "microsoft-key.enc"))).toBe(true);
+  });
+
+  it("settings:save rejects the Microsoft model without a key or endpoint", async () => {
+    const { deps, captured } = fakeDeps();
+    boot(deps);
+    captured.readyCb();
+
+    const noKey = await captured.handlers["settings:save"](null, {
+      config: {
+        recordKey: "RIGHT ALT",
+        summaryModifier: "F13",
+        transcriptionModels: ["microsoft"],
+        microsoftEndpoint: "https://res.services.ai.azure.com",
+      },
+      microsoftApiKey: "",
+    });
+    expect(noKey.ok).toBe(false);
+    expect(noKey.error).toMatch(/Microsoft API key/i);
+
+    const noEndpoint = await captured.handlers["settings:save"](null, {
+      config: { recordKey: "RIGHT ALT", summaryModifier: "F13", transcriptionModels: ["microsoft"] },
+      microsoftApiKey: "ms-key",
+    });
+    expect(noEndpoint.ok).toBe(false);
+    expect(noEndpoint.error).toMatch(/Microsoft endpoint is required/i);
+  });
+
+  it("settings:save rejects a malformed Microsoft endpoint even when it is not in use", async () => {
+    const { deps, captured } = fakeDeps();
+    boot(deps);
+    captured.readyCb();
+
+    const result = await captured.handlers["settings:save"](null, {
+      config: {
+        recordKey: "RIGHT ALT",
+        summaryModifier: "F13",
+        microsoftEndpoint: "https://res.services.ai.azure.com/mai/v1/realtime",
+      },
+    });
+    expect(result.ok).toBe(false);
+    expect(result.error).toMatch(/must look like/i);
+  });
+
+  it("settings:save requires the key of every checked model", async () => {
+    const { deps, captured } = fakeDeps();
+    fs.writeFileSync(path.join(captured.userDataDir, "google-key.enc"), Buffer.from("gk"));
+    boot(deps);
+    captured.readyCb();
+
+    const result = await captured.handlers["settings:save"](null, {
+      config: {
+        recordKey: "RIGHT ALT",
+        summaryModifier: "F13",
+        transcriptionModels: ["mistral", "google", "microsoft"],
+        microsoftEndpoint: "https://res.services.ai.azure.com",
+      },
+    });
+    expect(result.ok).toBe(false);
+    expect(result.error).toMatch(/Microsoft API key/i);
+  });
+
+  it("settings:save rejects an empty model selection", async () => {
+    const { deps, captured } = fakeDeps();
+    boot(deps);
+    captured.readyCb();
+
+    const result = await captured.handlers["settings:save"](null, {
+      config: { recordKey: "RIGHT ALT", summaryModifier: "F13", transcriptionModels: [] },
+    });
+    expect(result.ok).toBe(false);
+    expect(result.error).toMatch(/at least one transcription model/i);
+  });
+
+  it("registers the streamed-chunk IPC channel", () => {
+    const { deps, captured } = fakeDeps();
+    const channels = [];
+    deps.ipcMain.on = (channel) => channels.push(channel);
+    boot(deps);
+    captured.readyCb();
+    expect(channels).toContain("capture:pcm");
+    expect(channels).toContain("capture:chunk");
   });
 });

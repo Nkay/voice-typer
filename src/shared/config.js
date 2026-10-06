@@ -1,6 +1,7 @@
 const fs = require("fs");
 
 const { KEY_NAMES } = require("./keys.js");
+const { normalizeEndpoint } = require("./microsoft.js");
 
 const DEFAULT_SUMMARY_PROMPT =
   "Summarise the transcript below in the same language it is written in. " +
@@ -20,14 +21,30 @@ const DEFAULTS = {
   sampleRate: 16000,
   micDeviceId: null,
   autoLaunch: false,
-  transcriptionProvider: "mistral",
+  // Every checked model is asked at the same time; the first transcript wins.
+  transcriptionModels: ["mistral"],
+  // Foundry resource root, e.g. "https://my-resource.services.ai.azure.com".
+  // Not a secret; the key lives in secrets like the other providers' keys.
+  microsoftEndpoint: "",
+  microsoftDeployment: "MAI-Transcribe-2-Streaming",
 };
 
 const LANGUAGES = ["auto", "de", "en"];
 
 const SEPARATORS = ["blank-line", "dash", "spaces"];
 
-const PROVIDERS = ["mistral", "google", "both"];
+// Microsoft alone types live while the key is held.
+const TRANSCRIPTION_MODELS = ["mistral", "google", "microsoft"];
+
+// The old single-choice "transcriptionProvider" setting, read once from an
+// older config file.
+const LEGACY_PROVIDERS = {
+  mistral: ["mistral"],
+  google: ["google"],
+  microsoft: ["microsoft"],
+  both: ["mistral", "google"],
+  all: ["mistral", "google", "microsoft"],
+};
 
 // Returns a message fit for the Settings window, or null when the modifier is
 // usable. An empty string is a deliberate opt-out, not an error. The main
@@ -47,6 +64,9 @@ function mergeConfig(overrides) {
   if (overrides && typeof overrides === "object") {
     for (const key of Object.keys(DEFAULTS)) {
       if (key in overrides) out[key] = overrides[key];
+    }
+    if (!("transcriptionModels" in overrides) && Object.hasOwn(LEGACY_PROVIDERS, overrides.transcriptionProvider)) {
+      out.transcriptionModels = LEGACY_PROVIDERS[overrides.transcriptionProvider];
     }
   }
   return validateConfig(out);
@@ -79,7 +99,11 @@ function validateConfig(config) {
       : DEFAULTS.summaryPrompt;
   if (!SEPARATORS.includes(c.separator)) c.separator = DEFAULTS.separator;
   c.autoLaunch = Boolean(c.autoLaunch);
-  if (!PROVIDERS.includes(c.transcriptionProvider)) c.transcriptionProvider = DEFAULTS.transcriptionProvider;
+  const models = Array.isArray(c.transcriptionModels) ? c.transcriptionModels : [];
+  c.transcriptionModels = TRANSCRIPTION_MODELS.filter((m) => models.includes(m));
+  if (c.transcriptionModels.length === 0) c.transcriptionModels = [...DEFAULTS.transcriptionModels];
+  c.microsoftEndpoint = normalizeEndpoint(c.microsoftEndpoint);
+  c.microsoftDeployment = nonEmptyString(c.microsoftDeployment, DEFAULTS.microsoftDeployment);
   return c;
 }
 
@@ -103,7 +127,6 @@ module.exports = {
   DEFAULTS,
   LANGUAGES,
   SEPARATORS,
-  PROVIDERS,
   DEFAULT_SUMMARY_PROMPT,
   summaryModifierError,
   mergeConfig,

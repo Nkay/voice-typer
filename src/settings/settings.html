@@ -25,13 +25,30 @@
     <label>Google API key
       <input id="googleApiKey" type="password" placeholder="leave blank to keep current key" />
     </label>
-    <label>Transcription provider
-      <select id="transcriptionProvider">
-        <option value="mistral">Mistral</option>
-        <option value="google">Google</option>
-        <option value="both">Both (compare)</option>
-      </select>
+    <label>Microsoft API key
+      <input id="microsoftApiKey" type="password" placeholder="leave blank to keep current key" />
     </label>
+    <label>Microsoft endpoint
+      <input id="microsoftEndpoint" type="text" placeholder="https://<resource>.services.ai.azure.com" />
+      <div class="hint">The Foundry resource that has the MAI-Transcribe-2-Streaming deployment. The project endpoint (…/api/projects/&lt;name&gt;) also works.</div>
+    </label>
+    <label>Microsoft deployment name
+      <input id="microsoftDeployment" type="text" placeholder="MAI-Transcribe-2-Streaming" />
+    </label>
+    <label>Transcription models</label>
+    <div class="row">
+      <input id="modelMistral" name="transcriptionModel" value="mistral" type="checkbox" />
+      <label for="modelMistral" style="margin:0;font-weight:400;">Mistral</label>
+    </div>
+    <div class="row">
+      <input id="modelGoogle" name="transcriptionModel" value="google" type="checkbox" />
+      <label for="modelGoogle" style="margin:0;font-weight:400;">Google</label>
+    </div>
+    <div class="row">
+      <input id="modelMicrosoft" name="transcriptionModel" value="microsoft" type="checkbox" />
+      <label for="modelMicrosoft" style="margin:0;font-weight:400;">Microsoft</label>
+    </div>
+    <div class="hint">All checked models are asked at the same time; the first transcript is typed. Microsoft alone types confirmed text while you speak. Typing waits while Shift, Ctrl, Alt, AltGr or Win is down, so with a modifier as the record key the text starts when you release it.</div>
     <label>Language
       <select id="language">
         <option value="auto">Auto-detect</option>
@@ -44,7 +61,7 @@
     </label>
     <label>Summary modifier (hold with the record key)
       <select id="summaryModifier"></select>
-      <div class="hint">Tap once and release—it stays active for the rest of the hold. Release it before typing starts to avoid upper-cased output. Must differ from the record key.</div>
+      <div class="hint">Tap once and release—it stays active for the rest of the hold. Typing waits until it is released. Must differ from the record key.</div>
     </label>
     <label>Summary model
       <select id="summaryModel"></select>

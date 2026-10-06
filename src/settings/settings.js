@@ -74,7 +74,8 @@ function setStatus(text, isError) {
 
 async function init() {
   try {
-    const { config, hasKey, hasGoogleKey, keys, models, modelsError } = await window.settingsAPI.get();
+    const { config, hasKey, hasGoogleKey, hasMicrosoftKey, keys, models, modelsError } =
+      await window.settingsAPI.get();
 
     fillKeySelect(document.getElementById("recordKey"), keys, config.recordKey);
     fillKeySelect(document.getElementById("summaryModifier"), keys, config.summaryModifier, {
@@ -89,10 +90,17 @@ async function init() {
     document.getElementById("apiKey").placeholder = hasKey
       ? "leave blank to keep current key"
       : "enter your Mistral API key";
-    document.getElementById("transcriptionProvider").value = config.transcriptionProvider || "mistral";
+    for (const box of document.querySelectorAll('input[name="transcriptionModel"]')) {
+      box.checked = config.transcriptionModels.includes(box.value);
+    }
     document.getElementById("googleApiKey").placeholder = hasGoogleKey
       ? "leave blank to keep current key"
       : "enter your Google API key";
+    document.getElementById("microsoftApiKey").placeholder = hasMicrosoftKey
+      ? "leave blank to keep current key"
+      : "enter your Microsoft Foundry API key";
+    document.getElementById("microsoftEndpoint").value = config.microsoftEndpoint || "";
+    document.getElementById("microsoftDeployment").value = config.microsoftDeployment || "";
     await loadMics(config.micDeviceId);
 
     document.getElementById("save").addEventListener("click", async () => {
@@ -108,10 +116,15 @@ async function init() {
             separator: document.getElementById("separator").value,
             micDeviceId: micValue || null,
             autoLaunch: document.getElementById("autoLaunch").checked,
-            transcriptionProvider: document.getElementById("transcriptionProvider").value,
+            transcriptionModels: [...document.querySelectorAll('input[name="transcriptionModel"]:checked')].map(
+              (box) => box.value
+            ),
+            microsoftEndpoint: document.getElementById("microsoftEndpoint").value,
+            microsoftDeployment: document.getElementById("microsoftDeployment").value,
           },
           apiKey: document.getElementById("apiKey").value,
           googleApiKey: document.getElementById("googleApiKey").value,
+          microsoftApiKey: document.getElementById("microsoftApiKey").value,
         };
 
         const result = await window.settingsAPI.save(payload);
@@ -125,6 +138,7 @@ async function init() {
         }
         document.getElementById("apiKey").value = "";
         document.getElementById("googleApiKey").value = "";
+        document.getElementById("microsoftApiKey").value = "";
         setStatus("Saved", false);
         setTimeout(() => setStatus("", false), 2000);
       } catch (err) {

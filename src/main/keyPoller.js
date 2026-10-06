@@ -1,4 +1,4 @@
-const { KEY_NAMES, vkFor } = require("../shared/keys.js");
+const { KEY_NAMES, TYPING_BLOCKER_VKS, vkFor } = require("../shared/keys.js");
 
 function createKeyPoller({
   getKeyState,
@@ -66,4 +66,10 @@ function createWin32KeyState() {
   return (vk) => (GetAsyncKeyState(vk) & 0x8000) !== 0;
 }
 
-module.exports = { createKeyPoller, createWin32KeyState };
+// True while the user physically holds a key that would corrupt injected
+// typing. See TYPING_BLOCKER_VKS.
+function createModifierProbe(getKeyState) {
+  return () => TYPING_BLOCKER_VKS.some((vk) => Boolean(getKeyState(vk)));
+}
+
+module.exports = { createKeyPoller, createWin32KeyState, createModifierProbe };

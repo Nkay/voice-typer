@@ -1,6 +1,6 @@
 const nodeFs = require("fs");
 
-function createSecrets({ safeStorage, filePath, googleFilePath, fs = nodeFs }) {
+function createSecrets({ safeStorage, filePath, googleFilePath, microsoftFilePath, fs = nodeFs }) {
   function _has(p) {
     return !!(p && fs.existsSync(p));
   }
@@ -28,6 +28,9 @@ function createSecrets({ safeStorage, filePath, googleFilePath, fs = nodeFs }) {
     hasGoogleKey() { return _has(googleFilePath); },
     getGoogleKey() { return _get(googleFilePath); },
     setGoogleKey(key) { _set(googleFilePath, key); },
+    hasMicrosoftKey() { return _has(microsoftFilePath); },
+    getMicrosoftKey() { return _get(microsoftFilePath); },
+    setMicrosoftKey(key) { _set(microsoftFilePath, key); },
   };
 }
 

@@ -13,10 +13,23 @@ function resample(input, inRate, outRate) {
   return out;
 }
 
-function encodeWav(samples, inputSampleRate, targetSampleRate = 16000) {
+// Signed 16-bit little-endian mono PCM, without a header: the body of a WAV
+// file, and the raw format the Microsoft realtime API expects.
+function toPcm16(samples, inputSampleRate, targetSampleRate = 16000) {
   const pcm = resample(samples, inputSampleRate, targetSampleRate);
-  const buffer = new ArrayBuffer(44 + pcm.length * 2);
-  const view = new DataView(buffer);
+  const out = new Uint8Array(pcm.length * 2);
+  const view = new DataView(out.buffer);
+  for (let i = 0; i < pcm.length; i++) {
+    const s = Math.max(-1, Math.min(1, pcm[i]));
+    view.setInt16(i * 2, s < 0 ? s * 0x8000 : s * 0x7fff, true);
+  }
+  return out;
+}
+
+function encodeWav(samples, inputSampleRate, targetSampleRate = 16000) {
+  const body = toPcm16(samples, inputSampleRate, targetSampleRate);
+  const out = new Uint8Array(44 + body.length);
+  const view = new DataView(out.buffer);
 
   const writeString = (offset, str) => {
     for (let i = 0; i < str.length; i++) view.setUint8(offset + i, str.charCodeAt(i));
@@ -24,7 +37,7 @@ function encodeWav(samples, inputSampleRate, targetSampleRate = 16000) {
 
   const byteRate = targetSampleRate * 2; // mono, 16-bit
   writeString(0, "RIFF");
-  view.setUint32(4, 36 + pcm.length * 2, true);
+  view.setUint32(4, 36 + body.length, true);
   writeString(8, "WAVE");
   writeString(12, "fmt ");
   view.setUint32(16, 16, true); // fmt chunk size
@@ -35,15 +48,9 @@ function encodeWav(samples, inputSampleRate, targetSampleRate = 16000) {
   view.setUint16(32, 2, true); // block align
   view.setUint16(34, 16, true); // bits per sample
   writeString(36, "data");
-  view.setUint32(40, pcm.length * 2, true);
-
-  let offset = 44;
-  for (let i = 0; i < pcm.length; i++) {
-    const s = Math.max(-1, Math.min(1, pcm[i]));
-    view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7fff, true);
-    offset += 2;
-  }
-  return new Uint8Array(buffer);
+  view.setUint32(40, body.length, true);
+  out.set(body, 44);
+  return out;
 }
 
-module.exports = { resample, encodeWav };
+module.exports = { resample, toPcm16, encodeWav };

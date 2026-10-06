@@ -25,9 +25,22 @@ const KEYS = [...MODIFIER_KEYS, ...FUNCTION_KEYS, ...OTHER_KEYS];
 const KEY_NAMES = KEYS.map((k) => k.name);
 const VK_BY_NAME = new Map(KEYS.map((k) => [k.name, k.vk]));
 
+// Keys whose physical state changes what an injected character means. Typing
+// while any of them is down turns the transcript into shortcuts: AltGr (seen by
+// Windows as Ctrl+Alt) gives "@", "€" and "{" on a German layout, Alt opens
+// menus, Ctrl and Win fire app and shell shortcuts. The generic VK_SHIFT,
+// VK_CONTROL and VK_MENU cover both the left and the right key.
+const TYPING_BLOCKER_VKS = [
+  0x10, // VK_SHIFT
+  0x11, // VK_CONTROL
+  0x12, // VK_MENU (Alt)
+  0x5b, // VK_LWIN
+  0x5c, // VK_RWIN
+];
+
 function vkFor(name) {
   if (typeof name !== "string") return undefined;
   return VK_BY_NAME.get(name.toUpperCase());
 }
 
-module.exports = { KEYS, KEY_NAMES, vkFor };
+module.exports = { KEYS, KEY_NAMES, TYPING_BLOCKER_VKS, vkFor };

@@ -166,34 +166,47 @@ describe("config", () => {
     expect(c.recordKey).toBe("RIGHT ALT");
   });
 
-  it("defaults transcriptionProvider to mistral", () => {
-    const c = cfg.mergeConfig({});
-    expect(c.transcriptionProvider).toBe("mistral");
+  it("defaults transcriptionModels to mistral", () => {
+    expect(cfg.mergeConfig({}).transcriptionModels).toEqual(["mistral"]);
   });
 
-  it("accepts valid transcription providers", () => {
-    for (const p of ["mistral", "google", "both"]) {
-      expect(cfg.validateConfig({ ...cfg.DEFAULTS, transcriptionProvider: p }).transcriptionProvider).toBe(p);
+  it("keeps known models in a fixed order and drops duplicates and unknown ones", () => {
+    expect(
+      cfg.validateConfig({ ...cfg.DEFAULTS, transcriptionModels: ["microsoft", "openai", "mistral", "mistral"] })
+        .transcriptionModels
+    ).toEqual(["mistral", "microsoft"]);
+  });
+
+  it("falls back to mistral for an empty or non-array model list", () => {
+    for (const value of [[], null, "google"]) {
+      expect(cfg.validateConfig({ ...cfg.DEFAULTS, transcriptionModels: value }).transcriptionModels).toEqual([
+        "mistral",
+      ]);
     }
   });
 
-  it("falls back to mistral for an invalid provider", () => {
-    expect(
-      cfg.validateConfig({ ...cfg.DEFAULTS, transcriptionProvider: "openai" }).transcriptionProvider
-    ).toBe("mistral");
+  it("reads the old transcriptionProvider setting", () => {
+    expect(cfg.mergeConfig({ transcriptionProvider: "google" }).transcriptionModels).toEqual(["google"]);
+    expect(cfg.mergeConfig({ transcriptionProvider: "both" }).transcriptionModels).toEqual(["mistral", "google"]);
+    expect(cfg.mergeConfig({ transcriptionProvider: "all" }).transcriptionModels).toEqual([
+      "mistral",
+      "google",
+      "microsoft",
+    ]);
+    expect(cfg.mergeConfig({ transcriptionProvider: "constructor" }).transcriptionModels).toEqual(["mistral"]);
+    expect("transcriptionProvider" in cfg.mergeConfig({ transcriptionProvider: "google" })).toBe(false);
   });
 
-  it("falls back to mistral for a non-string provider", () => {
+  it("prefers transcriptionModels over the old setting", () => {
     expect(
-      cfg.validateConfig({ ...cfg.DEFAULTS, transcriptionProvider: null }).transcriptionProvider
-    ).toBe("mistral");
+      cfg.mergeConfig({ transcriptionProvider: "all", transcriptionModels: ["google"] }).transcriptionModels
+    ).toEqual(["google"]);
   });
 
-  it("round-trips transcriptionProvider through save and load", () => {
+  it("round-trips transcriptionModels through save and load", () => {
     const p = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "vt-")), "config.json");
-    cfg.saveConfig(p, cfg.mergeConfig({ transcriptionProvider: "both" }));
-    const c = cfg.loadConfig(p);
-    expect(c.transcriptionProvider).toBe("both");
+    cfg.saveConfig(p, cfg.mergeConfig({ transcriptionModels: ["mistral", "google"] }));
+    expect(cfg.loadConfig(p).transcriptionModels).toEqual(["mistral", "google"]);
   });
 });
 
@@ -216,5 +229,24 @@ describe("summaryModifierError", () => {
 
   it("rejects a non-string, non-empty value", () => {
     expect(cfg.summaryModifierError("RIGHT ALT", null)).toMatch(/not a bindable key/i);
+  });
+
+  it("defaults to no Microsoft endpoint and the streaming deployment", () => {
+    const c = cfg.mergeConfig({});
+    expect(c.microsoftEndpoint).toBe("");
+    expect(c.microsoftDeployment).toBe("MAI-Transcribe-2-Streaming");
+  });
+
+  it("normalises the Microsoft endpoint and blanks an unusable one", () => {
+    expect(cfg.mergeConfig({ microsoftEndpoint: "res.services.ai.azure.com/" }).microsoftEndpoint).toBe(
+      "https://res.services.ai.azure.com"
+    );
+    expect(cfg.mergeConfig({ microsoftEndpoint: "https://res.services.ai.azure.com/mai" }).microsoftEndpoint).toBe("");
+    expect(cfg.mergeConfig({ microsoftEndpoint: 42 }).microsoftEndpoint).toBe("");
+  });
+
+  it("falls back to the default deployment for a blank one", () => {
+    expect(cfg.mergeConfig({ microsoftDeployment: "  " }).microsoftDeployment).toBe("MAI-Transcribe-2-Streaming");
+    expect(cfg.mergeConfig({ microsoftDeployment: " my-deploy " }).microsoftDeployment).toBe("my-deploy");
   });
 });
