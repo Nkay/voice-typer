@@ -10,9 +10,14 @@ describe("config", () => {
     const c = cfg.loadConfig(path.join(os.tmpdir(), "vt-missing-xyz.json"));
     expect(c.recordKey).toBe("RIGHT ALT");
     expect(c.language).toBe("auto");
-    expect(c.model).toBe("voxtral-mini-latest");
+    expect(c.model).toBe("voxtral-mini-transcribe-3");
     expect(c.sampleRate).toBe(16000);
     expect(c.autoLaunch).toBe(false);
+  });
+
+  it("moves a saved old default model to the current default", () => {
+    expect(cfg.mergeConfig({ model: "voxtral-mini-latest" }).model).toBe("voxtral-mini-transcribe-3");
+    expect(cfg.mergeConfig({ model: "voxtral-small-transcribe-3" }).model).toBe("voxtral-small-transcribe-3");
   });
 
   it("merges overrides and keeps unknown keys out", () => {
