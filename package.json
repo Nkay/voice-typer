@@ -1,6 +1,6 @@
 {
   "name": "voicetyper",
-  "version": "2.1.0",
+  "version": "2.2.0",
   "description": "Hold a key to record speech and type the transcript at the cursor, via Mistral Voxtral or Google Gemini (Windows).",
   "main": "src/main/index.js",
   "scripts": {

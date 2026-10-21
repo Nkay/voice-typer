@@ -14,7 +14,7 @@ const DEFAULTS = {
   // key default: hold AltGr, add Right Shift for transcript + summary.
   summaryModifier: "RIGHT SHIFT",
   language: "auto",
-  model: "voxtral-mini-latest",
+  model: "voxtral-mini-transcribe-3",
   summaryModel: "mistral-small-latest",
   summaryPrompt: DEFAULT_SUMMARY_PROMPT,
   separator: "blank-line",
@@ -46,6 +46,10 @@ const LEGACY_PROVIDERS = {
   all: ["mistral", "google", "microsoft"],
 };
 
+// Earlier default Mistral models. Every config file saves the model, so an old
+// default stays in use until it is moved to the current one on load.
+const LEGACY_DEFAULT_MODELS = ["voxtral-mini-latest"];
+
 // Returns a message fit for the Settings window, or null when the modifier is
 // usable. An empty string is a deliberate opt-out, not an error. The main
 // process is the only place this rule lives; the renderer surfaces the
@@ -68,6 +72,7 @@ function mergeConfig(overrides) {
     if (!("transcriptionModels" in overrides) && Object.hasOwn(LEGACY_PROVIDERS, overrides.transcriptionProvider)) {
       out.transcriptionModels = LEGACY_PROVIDERS[overrides.transcriptionProvider];
     }
+    if (LEGACY_DEFAULT_MODELS.includes(out.model)) out.model = DEFAULTS.model;
   }
   return validateConfig(out);
 }

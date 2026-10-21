@@ -16,7 +16,7 @@ wins.
 2. Speak.
 3. Release the key to stop recording. The audio is sent to each checked
    transcription model:
-   - **Mistral** — the Voxtral transcription API (`voxtral-mini-latest`).
+   - **Mistral** — the Voxtral transcription API (`voxtral-mini-transcribe-3`).
    - **Google** — the Gemini Interactions API (`gemini-3.5-transcribe`), with
      the audio sent inline in the request.
    - **Microsoft** — MAI-Transcribe-2-Streaming over the Foundry Realtime

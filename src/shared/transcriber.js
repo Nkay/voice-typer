@@ -9,7 +9,7 @@ const TranscriberError = MistralError;
 async function transcribe(wavBytes, opts = {}) {
   const {
     apiKey,
-    model = "voxtral-mini-latest",
+    model = "voxtral-mini-transcribe-3",
     language = "auto",
     fetchImpl = fetch,
     timeoutMs = 30000,
