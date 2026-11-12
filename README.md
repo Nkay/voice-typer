@@ -52,6 +52,26 @@ model that fails or hears nothing does not stop the others, so you never lose a
 dictation to a single provider outage. Only when every model fails does a
 notification name the first error.
 
+### Primary model
+
+The fastest model is not always the one whose transcript you want. With more
+than one model checked, **Primary model** in Settings names the model you
+prefer; the other checked models are its backup:
+
+- If the primary answers first, its transcript is typed at once.
+- If another model answers first, VoiceTyper waits for the primary until 1.5
+  times the answer time of that model. An answer after 1.0 s gives the primary
+  until 1.5 s. If the primary answers in that time, its transcript is typed;
+  otherwise the other transcript is typed and the late answer is dropped.
+- If the primary fails or hears nothing, the other transcript is typed without
+  the wait. If every other model fails, VoiceTyper waits for the primary.
+
+So a primary that is stuck costs you at most half of the backup's answer time.
+With Microsoft as the primary, both its realtime transcript and its
+non-streaming transcript count as the primary's answer. The timing history
+marks the primary and shows the wait as its own step. With **none** selected,
+the first transcript wins as before.
+
 Microsoft does not type live when other models are checked. It joins the race
 twice: with the final transcript of the realtime session that ran during the
 hold, and with the non-streaming `MAI-Transcribe-2` model, which receives the
@@ -67,7 +87,22 @@ With several models checked, this includes the answers that arrived after the
 first one was typed, each under its model's label (`[Microsoft (live)]` for the
 realtime session); a single transcript is copied without a label. Both taps are too short
 to type anything. A longer second press records as usual, even right after a
-tap.
+tap. The copy happens 0.4 s after the second tap, once it is clear that no
+third tap follows.
+
+### Record without holding the key
+
+Tap the record key three times (three short taps, each within 0.4 s of the one
+before) to start a recording that goes on after you let go. A notification
+confirms it and the tray icon shows the recording state. Tap the record key
+once more to stop; the recording is then transcribed and typed like any other
+dictation. Hold the **summary modifier** during that last tap to get the
+summary as well. With **Microsoft** alone the text is typed while you speak,
+hands-free.
+
+There is no time limit: the recording runs until you tap the key. Remember
+that Google rejects recordings of more than about seven minutes, and that with
+Microsoft checked the audio is sent while the recording runs.
 
 Also holding the **summary modifier** (Right Shift by default) at any point during
 the hold upgrades that recording to transcript + summary: release the record key
@@ -84,13 +119,42 @@ failed summary never costs you your dictation.
 > won. With **Microsoft** alone the summary is typed after the live transcript.
 
 A tray icon shows the current state (idle, recording, processing, paused, or
-error) and gives you a menu to pause/resume, open Settings, or quit.
+error) and gives you a menu to pause/resume, open Settings, open the timing
+history, or quit.
 
-> **A note on typing speed.** Text is typed via synthesized keystrokes, one
-> character at a time with a small delay between each (2 ms). A long dictation
-> can occupy the keyboard for a few seconds, and the summary command adds to
-> the character count. Avoid typing yourself into the focused field until the
-> tray icon leaves the "processing" state.
+> **A note on typing speed.** Text is typed via synthesized keystrokes, in
+> blocks of 20 characters with a small pause between two blocks (2 ms). The
+> pauses of a 500-character dictation add up to about 50 ms. Avoid typing
+> yourself into the focused field until the tray icon leaves the "processing"
+> state.
+
+### Timing history
+
+When a dictation feels slow, the tray menu's **Timing history…** shows where
+the time went. The window lists the last 50 dictations, newest first, and for
+each one how long every step took:
+
+- **audio ready** — from the release of the key until the recording reached the
+  app.
+- **queue wait** — how long the dictation waited behind an earlier one that was
+  still being transcribed or typed.
+- **one row per model** — how long each checked model took to answer, counted
+  from the moment the requests were sent. The row says which answer was typed,
+  which arrived later, which heard nothing, and which failed (with the error
+  code, for example `TIMEOUT`). A model that answers after the text is typed
+  fills in its row when it does.
+- **wait for primary** — how long a finished transcript of another model
+  waited for the primary model (see [Primary model](#primary-model)).
+- **summary** — the summary request, for a dictation with the summary command.
+- **typing** — the synthesized keystrokes, with the number of characters. This
+  includes any time typing waited for you to let go of a modifier key. With
+  **Microsoft** alone the text is typed while you speak, so the row shows only
+  the typing that was left after the final transcript arrived.
+
+The heading of each dictation gives the length of the recording and the total
+time from the release of the key until typing finished. The slowest step on the
+way to the typed text is highlighted. The window updates while it is open, and
+**Clear** empties the list.
 
 ### Protection against stray shortcuts
 
@@ -99,8 +163,10 @@ physically down at that moment. If AltGr is held while text types — for
 example because you start the next dictation before the previous one has
 finished typing — `e` becomes `€`, `q` becomes `@`, and Ctrl+Alt or Win
 combinations open windows. VoiceTyper therefore checks **Shift, Ctrl, Alt/AltGr
-and Win before every character** and pauses while any of them is down; typing
-resumes exactly where it stopped once they are released.
+and Win before every block of characters** and pauses while any of them is
+down; typing resumes exactly where it stopped once they are released. A block
+is sent in one call without a pause, so there is almost no time for a key to
+go down in the middle of one.
 
 Pausing is unlimited while a dictation hold is in progress. Otherwise, if a
 modifier stays down for more than 10 seconds, VoiceTyper stops typing, puts the
@@ -180,6 +246,9 @@ The same Settings window lets you configure:
 - **Transcription models** — check one or more of `Mistral`, `Google` and
   `Microsoft` (see [Several models at once](#several-models-at-once)). At least
   one must be checked. Defaults to Mistral.
+- **Primary model** — one of the checked models, or none. The transcript of the
+  primary is preferred to a faster transcript of another model, within a time
+  limit (see [Primary model](#primary-model)). Defaults to none.
 - **Language** — `auto` (auto-detect), `de` (German), or `en` (English). Applies
   to whichever provider is in use.
 - **Record key** — the key you hold for a plain transcript. Defaults to **Right
@@ -220,11 +289,15 @@ Non-secret settings are stored as JSON at:
 
 That includes `transcriptionModels` (a list of `"mistral"`, `"google"` and
 `"microsoft"`; an older `transcriptionProvider` value is read once and
-converted), `microsoftEndpoint`, `microsoftDeployment`, and the
+converted), `primaryModel` (one of the checked models, or `""` for none),
+`microsoftEndpoint`, `microsoftDeployment`, and the
 provider-prefixed `summaryModel`. The API keys are stored separately
 (encrypted, as `key.enc` for Mistral, `google-key.enc` for Google and
 `microsoft-key.enc` for Microsoft) in the same directory and are not part of
 this file.
+
+The timing history is stored next to it as `timings.json`. It holds durations,
+model names and character counts only — never the dictated text.
 
 ## Building the installer
 

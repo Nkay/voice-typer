@@ -24,7 +24,10 @@ function harness(overrides = {}) {
   const notifications = [];
   const clipboard = [];
   let nowMs = 0;
+  // Each wait the controller starts stays open until the test ends it.
+  const openWaits = [];
   const deps = {
+    wait: () => new Promise((resolve) => openWaits.push(resolve)),
     hotkey,
     recorder,
     transcribe: overrides.transcribe || (async () => "text"),
@@ -65,6 +68,10 @@ function harness(overrides = {}) {
     notifications,
     clipboard,
     advance: (ms) => { nowMs += ms; },
+    endWaits: async () => {
+      openWaits.splice(0).forEach((resolve) => resolve());
+      await new Promise((r) => setTimeout(r, 0));
+    },
   };
 }
 
@@ -708,6 +715,7 @@ describe("Controller double press", () => {
     await new Promise((r) => setTimeout(r, 0));
 
     doublePress(h);
+    await h.endWaits();
     await new Promise((r) => setTimeout(r, 0));
 
     expect(h.clipboard).toEqual(["[Google]\ngoogle text\n\n[Mistral]\nmistral text"]);
@@ -720,19 +728,31 @@ describe("Controller double press", () => {
     h.controller.start();
     await dictate(h);
     doublePress(h);
+    await h.endWaits();
     expect(h.clipboard).toEqual(["text"]);
     expect(h.notifications.at(-1)).toEqual(["VoiceTyper", "Transcript copied"]);
   });
 
-  it("says so when there is no transcript yet", () => {
+  it("says so when there is no transcript yet", async () => {
     const h = harness();
     h.controller.start();
     doublePress(h);
+    await h.endWaits();
     expect(h.clipboard).toEqual([]);
     expect(h.notifications.at(-1)).toEqual(["VoiceTyper", "No transcript to copy yet"]);
   });
 
-  it("does not copy again on a third quick tap", async () => {
+  it("copies only after the wait for a third tap is over", async () => {
+    const h = harness();
+    h.controller.start();
+    await dictate(h);
+    doublePress(h);
+    expect(h.clipboard).toEqual([]);
+    await h.endWaits();
+    expect(h.clipboard).toEqual(["text"]);
+  });
+
+  it("does not copy when a third quick tap follows", async () => {
     const h = harness();
     h.controller.start();
     await dictate(h);
@@ -741,6 +761,20 @@ describe("Controller double press", () => {
     h.hotkey.emit("record-start");
     h.advance(100);
     h.hotkey.emit("record-stop", { mode: "transcript" });
+    await h.endWaits();
+    expect(h.clipboard).toEqual([]);
+  });
+
+  it("still copies when a long press follows the double press", async () => {
+    const h = harness();
+    h.controller.start();
+    await dictate(h);
+    doublePress(h);
+    h.advance(200);
+    h.hotkey.emit("record-start");
+    h.advance(1200);
+    h.hotkey.emit("record-stop", { mode: "transcript" });
+    await h.endWaits();
     expect(h.clipboard).toEqual(["text"]);
   });
 
@@ -764,6 +798,7 @@ describe("Controller double press", () => {
     h.controller.start();
     await dictate(h);
     doublePress(h);
+    await h.endWaits();
     expect(h.notifications.at(-1)).toEqual(["VoiceTyper", "Could not copy to the clipboard"]);
   });
 

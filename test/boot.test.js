@@ -16,13 +16,18 @@ function fakeDeps() {
     handlers: {},
     userDataDir,
     setKeysCalls: [],
+    // The file name each window loaded, and every message sent to a window.
+    loaded: [],
+    sent: [],
   };
 
   class FakeBrowserWindow {
     constructor() {
-      this.webContents = { send: () => {} };
+      this.webContents = { send: (...args) => captured.sent.push(args) };
     }
-    loadFile() {}
+    loadFile(file) {
+      captured.loaded.push(path.basename(file));
+    }
     setMenuBarVisibility() {}
     focus() {}
     isDestroyed() {
@@ -399,6 +404,28 @@ describe("boot wiring", () => {
     expect(result.models).toBeDefined();
   });
 
+  it("save stores the primary model", async () => {
+    const { deps, captured } = fakeDeps();
+    fs.writeFileSync(path.join(captured.userDataDir, "key.enc"), Buffer.from("mk"));
+    fs.writeFileSync(path.join(captured.userDataDir, "google-key.enc"), Buffer.from("gk"));
+    boot(deps);
+    captured.readyCb();
+
+    const result = await captured.handlers["settings:save"](null, {
+      config: {
+        recordKey: "RIGHT ALT",
+        summaryModifier: "F13",
+        transcriptionModels: ["mistral", "google"],
+        primaryModel: "google",
+      },
+      apiKey: "",
+      googleApiKey: "",
+    });
+
+    expect(result.ok).toBe(true);
+    expect((await captured.handlers["settings:get"]()).config.primaryModel).toBe("google");
+  });
+
   it("fetches models from both providers when both keys exist", async () => {
     const { deps, captured } = fakeDeps();
     fs.writeFileSync(path.join(captured.userDataDir, "key.enc"), Buffer.from("mk"));
@@ -523,5 +550,82 @@ describe("boot wiring", () => {
     captured.readyCb();
     expect(channels).toContain("capture:pcm");
     expect(channels).toContain("capture:chunk");
+  });
+});
+
+describe("timing history window", () => {
+  const storedEntry = {
+    at: 1000,
+    mode: "transcript",
+    live: false,
+    recordMs: 6400,
+    audioMs: 80,
+    queueMs: 0,
+    models: [{ label: "Mistral", ms: 1210, status: "ok", typed: true }],
+    summaryMs: null,
+    summaryFailed: false,
+    typingMs: 2550,
+    chars: 412,
+    totalMs: 3900,
+  };
+
+  const openHistory = (captured) =>
+    captured.tray.menus.at(-1).find((item) => item.label === "Timing history…").click();
+
+  it("opens from the tray menu", () => {
+    const { deps, captured } = fakeDeps();
+    boot(deps);
+    captured.readyCb();
+
+    openHistory(captured);
+
+    expect(captured.loaded).toContain("history.html");
+  });
+
+  it("opens only one window", () => {
+    const { deps, captured } = fakeDeps();
+    boot(deps);
+    captured.readyCb();
+
+    openHistory(captured);
+    openHistory(captured);
+
+    expect(captured.loaded.filter((file) => file === "history.html")).toHaveLength(1);
+  });
+
+  it("get returns the stored dictations as display rows", async () => {
+    const { deps, captured } = fakeDeps();
+    fs.writeFileSync(path.join(captured.userDataDir, "timings.json"), JSON.stringify([storedEntry]), "utf8");
+    boot(deps);
+    captured.readyCb();
+
+    const list = await captured.handlers["history:get"]();
+
+    expect(list).toHaveLength(1);
+    expect(list[0].at).toBe(1000);
+    expect(list[0].rows.map((r) => r.label)).toEqual(["audio ready", "queue wait", "Mistral", "typing"]);
+  });
+
+  it("clear empties the history and updates the open window", async () => {
+    const { deps, captured } = fakeDeps();
+    fs.writeFileSync(path.join(captured.userDataDir, "timings.json"), JSON.stringify([storedEntry]), "utf8");
+    boot(deps);
+    captured.readyCb();
+    openHistory(captured);
+
+    await captured.handlers["history:clear"]();
+
+    expect(await captured.handlers["history:get"]()).toEqual([]);
+    expect(captured.sent).toContainEqual(["history:changed", []]);
+  });
+
+  it("a change without an open window sends nothing", async () => {
+    const { deps, captured } = fakeDeps();
+    boot(deps);
+    captured.readyCb();
+
+    await captured.handlers["history:clear"]();
+
+    expect(captured.sent.filter(([channel]) => channel === "history:changed")).toEqual([]);
   });
 });

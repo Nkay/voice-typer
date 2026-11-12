@@ -216,14 +216,26 @@ describe("typer.typeParts", () => {
 });
 
 describe("typer modifier guard", () => {
-  it("types each character separately so a modifier is checked in between", async () => {
-    const singles = [];
+  it("stops before a block when a modifier goes down mid-text", async () => {
+    let typedCount = 0;
+    const order = [];
     const typer = createTyper({
-      keyboard: { type: async (t) => singles.push(t), pressKey: async () => {}, releaseKey: async () => {} },
+      keyboard: { pressKey: async () => {}, releaseKey: async () => {} },
       Key,
+      typeBlock: async (t) => {
+        typedCount++;
+        order.push(t);
+      },
+      blockSize: 2,
+      blockPauseMs: 0,
+      isModifierDown: (() => {
+        let polls = 0;
+        return () => typedCount === 1 && polls++ < 2;
+      })(),
+      sleep: async () => order.push("wait"),
     });
-    await typer.type("äb c");
-    expect(singles).toEqual(["ä", "b", " ", "c"]);
+    await typer.type("abcd");
+    expect(order).toEqual(["ab", "wait", "wait", "cd"]);
   });
 
   it("waits while a modifier is down and resumes after it is released", async () => {
@@ -237,30 +249,6 @@ describe("typer modifier guard", () => {
     await typer.type("hi");
     expect(f.calls).toEqual([["type", "hi"]]);
     expect(sleeps).toEqual([15, 15, 15]);
-  });
-
-  it("stops before a character when a modifier goes down mid-text", async () => {
-    let typedCount = 0;
-    const order = [];
-    const typer = createTyper({
-      keyboard: {
-        type: async (t) => {
-          typedCount++;
-          order.push(t);
-        },
-        pressKey: async () => {},
-        releaseKey: async () => {},
-      },
-      Key,
-      // AltGr goes down after the second character and is released after two polls.
-      isModifierDown: (() => {
-        let polls = 0;
-        return () => typedCount === 2 && polls++ < 2;
-      })(),
-      sleep: async () => order.push("wait"),
-    });
-    await typer.type("abcd");
-    expect(order).toEqual(["a", "b", "wait", "wait", "c", "d"]);
   });
 
   it("checks the modifiers before a soft newline as well", async () => {
@@ -281,10 +269,11 @@ describe("typer modifier guard", () => {
   it("gives up after the timeout and reports the untyped rest", async () => {
     let typedCount = 0;
     const { f, typer } = make({
-      isModifierDown: () => typedCount >= 2,
+      isModifierDown: () => typedCount >= 1,
       sleep: async () => {},
       modifierTimeoutMs: 30,
       pollMs: 10,
+      blockSize: 2,
     });
     const keyboard = f.keyboard;
     const original = keyboard.type;
@@ -311,6 +300,73 @@ describe("typer modifier guard", () => {
     });
     await typer.type("ok");
     expect(f.calls).toEqual([["type", "ok"]]);
+  });
+});
+
+describe("typer blocks", () => {
+  // Records each block on its own; the shared fake joins neighbouring calls.
+  function blockTyper(opts = {}) {
+    const calls = [];
+    const typer = createTyper({
+      keyboard: {
+        pressKey: async (...k) => calls.push(["press", ...k]),
+        releaseKey: async (...k) => calls.push(["release", ...k]),
+      },
+      Key,
+      typeBlock: async (t) => calls.push(["block", t]),
+      sleep: async (ms) => calls.push(["sleep", ms]),
+      ...opts,
+    });
+    return { calls, typer };
+  }
+
+  it("sends the text in blocks instead of one character at a time", async () => {
+    const { calls, typer } = blockTyper({ blockSize: 3, blockPauseMs: 0 });
+    await typer.type("äb cdefg");
+    expect(calls).toEqual([["block", "äb "], ["block", "cde"], ["block", "fg"]]);
+  });
+
+  it("sends a short text as one block", async () => {
+    const { calls, typer } = blockTyper();
+    await typer.type("hello world");
+    expect(calls).toEqual([["block", "hello world"]]);
+  });
+
+  it("pauses between two blocks, so the target app keeps up", async () => {
+    const { calls, typer } = blockTyper({ blockSize: 2, blockPauseMs: 2 });
+    await typer.type("abcde");
+    expect(calls).toEqual([["block", "ab"], ["sleep", 2], ["block", "cd"], ["sleep", 2], ["block", "e"]]);
+  });
+
+  it("ends a block at a newline and never puts the newline into a block", async () => {
+    const { calls, typer } = blockTyper({ blockSize: 10, blockPauseMs: 2 });
+    await typer.type("ab\ncd");
+    expect(calls).toEqual([
+      ["block", "ab"],
+      ["press", "LeftShift", "Return"],
+      ["release", "LeftShift", "Return"],
+      ["block", "cd"],
+    ]);
+  });
+
+  it("checks the modifiers before each block", async () => {
+    let checks = 0;
+    const { typer } = blockTyper({
+      blockSize: 2,
+      blockPauseMs: 0,
+      isModifierDown: () => {
+        checks++;
+        return false;
+      },
+    });
+    await typer.type("abcdef");
+    expect(checks).toBe(3);
+  });
+
+  it("uses keyboard.type when no block sender is given", async () => {
+    const { f, typer } = make({ blockSize: 2, blockPauseMs: 0 });
+    await typer.type("abc");
+    expect(f.calls).toEqual([["type", "abc"]]);
   });
 });
 
