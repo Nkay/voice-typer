@@ -3,10 +3,15 @@ const { separatorText } = require("./typer.js");
 
 const PROVIDER_LABELS = { MicrosoftError: "Microsoft", GoogleError: "Google" };
 
-// Two taps this short, the second this soon after the first, are a double
-// press. It is known only at the second release, so a longer second press
-// still records.
-const DOUBLE_PRESS_MS = 400;
+// Taps this short, each this soon after the one before, count as one gesture:
+// two copy the last transcripts, three start a recording that continues after
+// the release. A tap is known only at its release, so a longer press still
+// records as usual.
+const TAP_MS = 400;
+
+// When another model answers before the primary model, the primary gets until
+// this many times the answer time of that model. Then the other text is typed.
+const PRIMARY_PATIENCE = 1.5;
 
 class Controller {
   constructor(deps) {
@@ -24,11 +29,14 @@ class Controller {
     this.openMicrosoftStream = deps.openMicrosoftStream;
     this.microsoftTranscribe = deps.microsoftTranscribe;
     this.copyToClipboard = deps.copyToClipboard || null;
+    // Where the duration of each step of a dictation is recorded.
+    this.history = deps.history || { add() {}, update() {} };
     this.getConfig = deps.getConfig;
     this.notify = deps.notify;
     this.minDurationMs = deps.minDurationMs != null ? deps.minDurationMs : 200;
     this.minHoldMs = deps.minHoldMs != null ? deps.minHoldMs : 1000;
     this.now = deps.now || Date.now;
+    this.wait = deps.wait || ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
     this.sampleRate = deps.sampleRate || 16000;
 
     this.paused = false;
@@ -38,6 +46,18 @@ class Controller {
     this.pressedAt = 0;
     this.lastHoldMs = Infinity;
     this.releasedAt = -Infinity;
+    // Short taps in a row so far.
+    this.taps = 0;
+    // True while a recording started by a triple tap runs with the key up.
+    this.latched = false;
+    // The copy of a double press waits for a possible third tap: `pendingCopy`
+    // identifies the running wait, `heldCopy` is a copy whose wait a new press
+    // interrupted.
+    this.pendingCopy = null;
+    this.heldCopy = false;
+    // How each capture ended, by capture id, from the release until its WAV
+    // arrives. A new press can come before that WAV.
+    this.stops = new Map();
     // Every transcript of the last dictation, in arrival order, for the double
     // press. A race keeps adding the slower answers after the first is typed.
     this.lastTranscripts = [];
@@ -72,6 +92,9 @@ class Controller {
 
   setPaused(paused) {
     this.paused = Boolean(paused);
+    // No key is held during a triple-tap recording, so it would go on while
+    // the app shows "paused". It ends like with the stop tap.
+    if (this.paused && this.latched) this._onStop();
     this._idle();
   }
 
@@ -121,6 +144,7 @@ class Controller {
       this._setState("error");
       return;
     }
+    // Also true for the tap that stops a triple-tap recording.
     if (this.recording) return;
     // Here, not only when Microsoft is checked: a stale live lane blocks every
     // later dictation, whatever the models are now.
@@ -131,6 +155,10 @@ class Controller {
     const captureId = ++this.captureSeq;
     if (streams && !this._openStream(captureId, models.length === 1, cfg)) return;
 
+    if (this.pendingCopy) {
+      this.pendingCopy = null;
+      this.heldCopy = true;
+    }
     this.recording = true;
     this.currentCaptureId = captureId;
     this.pressedAt = this.now();
@@ -205,29 +233,64 @@ class Controller {
 
   _onStop(payload) {
     if (!this.recording) return;
-    this.recording = false;
-    const previousHoldMs = this.lastHoldMs;
-    const gapMs = this.pressedAt - this.releasedAt;
-    this.releasedAt = this.now();
-    this.lastHoldMs = this.releasedAt - this.pressedAt;
-    this.pendingMode = payload && payload.mode === "summary" ? "summary" : "transcript";
-    const rec = this.streams.get(this.currentCaptureId);
-    if (rec) rec.stoppedAt = this.now();
-    this.recorder.stop();
-    // Both taps are too short to type anything; their recordings are dropped.
-    if (this.lastHoldMs < DOUBLE_PRESS_MS && previousHoldMs < DOUBLE_PRESS_MS && gapMs < DOUBLE_PRESS_MS) {
-      this.releasedAt = -Infinity;
-      this._copyTranscripts();
+    const now = this.now();
+    const heldCopy = this.heldCopy;
+    this.heldCopy = false;
+    if (this.latched) {
+      this.latched = false;
+    } else {
+      const isTap = now - this.pressedAt < TAP_MS;
+      const inRow = this.pressedAt - this.releasedAt < TAP_MS;
+      this.taps = !isTap ? 0 : inRow ? this.taps + 1 : 1;
+      if (this.taps === 3) {
+        // The recording of this tap goes on until the next tap; the copy of
+        // the two taps before it is dropped.
+        this.taps = 0;
+        this.latched = true;
+        this.notify("VoiceTyper", "Recording — tap the record key to stop");
+        return;
+      }
     }
+    this.recording = false;
+    this.releasedAt = now;
+    this.lastHoldMs = now - this.pressedAt;
+    this.pendingMode = payload && payload.mode === "summary" ? "summary" : "transcript";
+    this.stops.set(this.currentCaptureId, { holdMs: this.lastHoldMs, mode: this.pendingMode, releasedAt: now });
+    const rec = this.streams.get(this.currentCaptureId);
+    if (rec) rec.stoppedAt = now;
+    this.recorder.stop();
+    // A press that interrupted the wait of a double press was no third tap.
+    if (heldCopy) this._copyTranscripts();
+    // A double press; the recordings of both taps are too short to count.
+    if (this.taps === 2) this._copyAfterWait();
+  }
+
+  // A third tap in time turns the double press into a triple tap, so the copy
+  // waits for that long.
+  _copyAfterWait() {
+    const pending = {};
+    this.pendingCopy = pending;
+    this.wait(TAP_MS).then(() => {
+      if (this.pendingCopy !== pending) return;
+      this.pendingCopy = null;
+      this._copyTranscripts();
+    });
   }
 
   _onWav(bytes, captureId) {
-    const mode = this.pendingMode;
+    const wavAt = this.now();
+    // The last release stands in for a WAV whose own release is not known.
+    const stop = this.stops.get(captureId) || {
+      holdMs: this.lastHoldMs,
+      mode: this.pendingMode,
+      releasedAt: this.releasedAt,
+    };
+    this.stops.delete(captureId);
     const rec = this.streams.get(captureId);
     this.streams.delete(captureId);
     const samples = (bytes.length - 44) / 2;
     const durationMs = (samples / this.sampleRate) * 1000;
-    if (this.lastHoldMs < this.minHoldMs || durationMs < this.minDurationMs) {
+    if (stop.holdMs < this.minHoldMs || durationMs < this.minDurationMs) {
       if (rec) this._discardStream(rec);
       this._idle();
       return;
@@ -236,7 +299,26 @@ class Controller {
       rec.qualified = true;
       this._flushLive(rec);
     }
-    this.queue.push({ bytes, mode, rec });
+    // A WAV without a release before it has no release time to measure from.
+    const releasedAt = Number.isFinite(stop.releasedAt) ? stop.releasedAt : wavAt;
+    // One entry of the timing history. `at` is the moment the key came up;
+    // every duration is in milliseconds. `models` holds one record per asked
+    // model.
+    const timing = {
+      at: releasedAt,
+      live: Boolean(rec && rec.lane),
+      recordMs: Math.round(durationMs),
+      audioMs: wavAt - releasedAt,
+      queueMs: 0,
+      models: [],
+      primaryWaitMs: null,
+      summaryMs: null,
+      summaryFailed: false,
+      typingMs: null,
+      chars: 0,
+      totalMs: 0,
+    };
+    this.queue.push({ bytes, mode: stop.mode, rec, timing });
     this._pump().catch((err) => console.error("VoiceTyper: pump failed", err));
   }
 
@@ -245,16 +327,19 @@ class Controller {
     this.working = true;
     try {
       while (this.queue.length > 0) {
-        const { bytes, mode, rec } = this.queue.shift();
+        const { bytes, mode, rec, timing } = this.queue.shift();
         this._setState("processing");
+        timing.queueMs = this.now() - (timing.at + timing.audioMs);
         try {
           const cfg = this.getConfig();
-          if (rec && rec.lane) await this._finishLive(rec, mode, cfg);
-          else await this._race(bytes, mode, cfg, rec);
+          if (rec && rec.lane) await this._finishLive(rec, mode, cfg, timing);
+          else await this._race(bytes, mode, cfg, rec, timing);
         } catch (err) {
           this._setState("error");
           this.notify("VoiceTyper", this._errorMessage(err));
         }
+        timing.totalMs = this.now() - timing.at;
+        this.history.add(timing);
       }
     } finally {
       this.working = false;
@@ -262,18 +347,37 @@ class Controller {
     }
   }
 
+  // Adds a model to the timing and returns the function that records how its
+  // request, sent at `startedAt`, ended. A slow model can end after the entry
+  // is in the history.
+  _trackModel(timing, label, startedAt, primary = false) {
+    const model = { label, ms: null, status: "pending", typed: false };
+    if (primary) model.primary = true;
+    timing.models.push(model);
+    return (status, err) => {
+      model.ms = this.now() - startedAt;
+      model.status = status;
+      if (status === "failed") model.error = (err && err.code) || "ERROR";
+      this.history.update(timing);
+      return model;
+    };
+  }
+
   // The live text is already typed (or queued); what is left is the final
   // transcript, any text confirmed after release, and an optional summary.
-  async _finishLive(rec, mode, cfg) {
+  async _finishLive(rec, mode, cfg, timing) {
     this.lastTranscripts = [];
+    const settle = this._trackModel(timing, "Microsoft (live)", this.now());
     let transcript;
     try {
       transcript = await rec.session.finish();
     } catch (err) {
+      settle("failed", err);
       this._flushLive(rec);
       await rec.lane.close();
       throw err;
     }
+    settle(transcript ? "ok" : "empty").typed = Boolean(transcript);
     this._flushLive(rec);
     if (transcript) this.lastTranscripts.push({ label: "Microsoft", text: transcript });
     // The service streams the transcript as deltas; this only matters if it
@@ -282,72 +386,125 @@ class Controller {
       rec.lane.push(transcript);
       rec.typedAny = true;
     }
+    let chars = (transcript || "").length;
     if (mode === "summary" && transcript) {
-      const summary = await this._summarizeOrNotify(transcript, cfg);
-      if (summary) rec.lane.push(separatorText(cfg.separator) + summary);
+      const summary = await this._summarizeOrNotify(transcript, cfg, timing);
+      if (summary) {
+        const rest = separatorText(cfg.separator) + summary;
+        rec.lane.push(rest);
+        chars += rest.length;
+      }
     }
+    const closeAt = this.now();
     await rec.lane.close();
+    timing.typingMs = this.now() - closeAt;
+    timing.chars = chars;
   }
 
-  // Asks every selected model at the same time and types the first non-empty
-  // transcript; later answers and failures are ignored. Microsoft runs both
-  // its non-streaming model and, when a session ran during the hold, the
-  // session's final transcript.
-  async _race(bytes, mode, cfg, rec) {
+  // Asks every selected model at the same time and types one non-empty
+  // transcript (see _pickWinner); later answers and failures are ignored.
+  // Microsoft runs both its non-streaming model and, when a session ran during
+  // the hold, the session's final transcript.
+  async _race(bytes, mode, cfg, rec, timing) {
     const models = cfg.transcriptionModels || ["mistral"];
     const transcripts = [];
     this.lastTranscripts = transcripts;
     const runs = [];
-    const add = (label, run) =>
-      runs.push(run.then((t) => {
-        if (t) transcripts.push({ label, text: t });
-        return t;
-      }));
+    const startedAt = this.now();
+    // An empty transcript rejects with null, so a faster silent answer does
+    // not hide a slower real one.
+    const add = (label, provider, run) => {
+      const primary = provider === cfg.primaryModel;
+      const settle = this._trackModel(timing, label, startedAt, primary);
+      runs.push({
+        primary,
+        promise: run.then(
+          (t) => {
+            const model = settle(t ? "ok" : "empty");
+            if (!t) return Promise.reject(null);
+            transcripts.push({ label, text: t });
+            return { model, text: t };
+          },
+          (err) => {
+            settle("failed", err);
+            throw err;
+          }
+        ),
+      });
+    };
     if (models.includes("mistral")) {
-      add("Mistral", this.transcribe(bytes, { apiKey: this.getApiKey(), model: cfg.model, language: cfg.language }));
+      add(
+        "Mistral",
+        "mistral",
+        this.transcribe(bytes, { apiKey: this.getApiKey(), model: cfg.model, language: cfg.language })
+      );
     }
     if (models.includes("google")) {
-      add("Google", this.googleTranscribe(bytes, { apiKey: this.getGoogleApiKey(), language: cfg.language }));
+      add("Google", "google", this.googleTranscribe(bytes, { apiKey: this.getGoogleApiKey(), language: cfg.language }));
     }
     if (models.includes("microsoft")) {
-      add("Microsoft", this.microsoftTranscribe(bytes, {
+      add("Microsoft", "microsoft", this.microsoftTranscribe(bytes, {
         apiKey: this.getMicrosoftApiKey(),
         endpoint: cfg.microsoftEndpoint,
         language: cfg.language,
       }));
     }
-    if (rec) add("Microsoft (live)", rec.session.finish());
+    if (rec) add("Microsoft (live)", "microsoft", rec.session.finish());
 
-    let text;
-    try {
-      // An empty transcript rejects with null, so a faster silent answer does
-      // not hide a slower real one.
-      text = await Promise.any(runs.map((run) => run.then((t) => t || Promise.reject(null))));
-    } catch (err) {
+    const winner = await this._pickWinner(runs, timing, startedAt);
+    if (!winner) {
       // Every model failed or heard nothing; the first real error is reported.
-      const failure = err.errors.find(Boolean);
+      const settled = await Promise.allSettled(runs.map((run) => run.promise));
+      const failure = settled.map((result) => result.reason).find(Boolean);
       if (failure) throw failure;
       return;
     }
-    await this._typeResult(text, mode, cfg);
+    winner.model.typed = true;
+    await this._typeResult(winner.text, mode, cfg, timing);
   }
 
-  async _typeResult(text, mode, cfg) {
-    if (mode !== "summary") {
-      await this._safeType(() => this.typer.type(text));
-      return;
-    }
+  // Resolves with the run whose text is typed, or with null when no model gave
+  // a text. Without a primary model the first text wins. With one, the text of
+  // the primary wins if it comes before the limit: PRIMARY_PATIENCE times the
+  // answer time of the first other model. A primary that fails or hears
+  // nothing ends the wait immediately.
+  async _pickWinner(runs, timing, startedAt) {
+    const first = (list) => Promise.any(list.map((run) => run.promise)).catch(() => null);
+    const preferred = runs.filter((run) => run.primary);
+    const others = runs.filter((run) => !run.primary);
+    if (preferred.length === 0 || others.length === 0) return first(runs);
 
-    const summary = await this._summarizeOrNotify(text, cfg);
-    if (!summary) {
-      await this._safeType(() => this.typer.type(text));
-      return;
-    }
-    await this._safeType(() => this.typer.typeParts([text, summary], cfg.separator));
+    const fromPrimary = first(preferred);
+    const fromOthers = first(others);
+    const early = await Promise.race([
+      fromPrimary.then((winner) => ({ primary: winner })),
+      fromOthers.then((winner) => ({ other: winner })),
+    ]);
+    if ("primary" in early) return early.primary || fromOthers;
+    if (!early.other) return fromPrimary;
+
+    const waitFrom = this.now();
+    const timedOut = {};
+    const late = await Promise.race([
+      fromPrimary,
+      this.wait((waitFrom - startedAt) * (PRIMARY_PATIENCE - 1)).then(() => timedOut),
+    ]);
+    timing.primaryWaitMs = this.now() - waitFrom;
+    return late === timedOut || late === null ? early.other : late;
+  }
+
+  async _typeResult(text, mode, cfg, timing) {
+    const summary = mode === "summary" ? await this._summarizeOrNotify(text, cfg, timing) : null;
+    const startedAt = this.now();
+    if (summary) await this._safeType(() => this.typer.typeParts([text, summary], cfg.separator));
+    else await this._safeType(() => this.typer.type(text));
+    timing.typingMs = this.now() - startedAt;
+    timing.chars = text.length + (summary ? separatorText(cfg.separator).length + summary.length : 0);
   }
 
   // Returns the summary, or null after telling the user it failed.
-  async _summarizeOrNotify(text, cfg) {
+  async _summarizeOrNotify(text, cfg, timing) {
+    const startedAt = this.now();
     try {
       const isGoogle = cfg.summaryModel.startsWith("google/");
       const model = cfg.summaryModel.replace(/^(google|mistral)\//, "");
@@ -364,7 +521,10 @@ class Controller {
     } catch (err) {
       console.error("VoiceTyper: summarization failed", err);
       this.notify("VoiceTyper", "Summary failed — typed transcript only");
+      timing.summaryFailed = true;
       return null;
+    } finally {
+      timing.summaryMs = this.now() - startedAt;
     }
   }
 

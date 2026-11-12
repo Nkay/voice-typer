@@ -18,6 +18,8 @@ const { openStream: defaultOpenMicrosoftStream } = require("../shared/microsoft-
 const { transcribe: microsoftTranscribe } = require("../shared/microsoft-transcriber.js");
 const { normalizeEndpoint } = require("../shared/microsoft.js");
 const { KEYS } = require("../shared/keys.js");
+const { createTimingHistory } = require("./timingHistory.js");
+const { describeTiming } = require("../shared/timing-format.js");
 
 // All Electron and native-module surfaces are injected so the wiring can be
 // exercised in tests without an Electron runtime.
@@ -39,8 +41,11 @@ function boot({
   // True while Shift, Ctrl, Alt/AltGr or Win is physically down; typing waits.
   isModifierDown = () => false,
   clipboard = null,
+  // Sends a run of characters at once; the typer falls back to keyboard.type.
+  typeBlock,
 }) {
-  // Slow the synthetic typing slightly so target apps keep up.
+  // The pause nut-js makes before each key press and release (the default is
+  // 300 ms). Text does not go through it; see typeBlock.
   keyboard.config.autoDelayMs = 2;
 
   if (!app.requestSingleInstanceLock()) {
@@ -118,25 +123,31 @@ function boot({
     return win;
   };
 
-  const openSettings = () => {
-    if (state.settingsWin && !state.settingsWin.isDestroyed()) {
-      state.settingsWin.focus();
+  // Opens the window of the folder src/<name>, or focuses it when it is open.
+  const openWindow = (name, options) => {
+    const key = `${name}Win`;
+    if (state[key] && !state[key].isDestroyed()) {
+      state[key].focus();
       return;
     }
-    state.settingsWin = new BrowserWindow({
-      width: 420,
-      height: 700,
-      resizable: false,
-      title: "VoiceTyper Settings",
+    state[key] = new BrowserWindow({
+      ...options,
       webPreferences: {
-        preload: path.join(__dirname, "..", "settings", "settings-preload.js"),
+        preload: path.join(__dirname, "..", name, `${name}-preload.js`),
         contextIsolation: true,
         nodeIntegration: false,
       },
     });
-    state.settingsWin.setMenuBarVisibility(false);
-    state.settingsWin.loadFile(path.join(__dirname, "..", "settings", "settings.html"));
+    state[key].setMenuBarVisibility(false);
+    state[key].loadFile(path.join(__dirname, "..", name, `${name}.html`));
   };
+
+  const openSettings = () =>
+    openWindow("settings", { width: 420, height: 700, resizable: false, title: "VoiceTyper Settings" });
+
+  const openHistory = () => openWindow("history", { width: 560, height: 640, title: "VoiceTyper Timing History" });
+
+  const historyRows = () => state.history.list().map(describeTiming);
 
   app.whenReady().then(() => {
     const userData = app.getPath("userData");
@@ -156,6 +167,16 @@ function boot({
     if (state.secrets.hasKey() || state.secrets.hasGoogleKey()) {
       state.modelsPromise = refreshModels();
     }
+
+    state.history = createTimingHistory({
+      filePath: path.join(userData, "timings.json"),
+      // An open history window follows each dictation as it happens.
+      onChange: () => {
+        if (state.historyWin && !state.historyWin.isDestroyed()) {
+          state.historyWin.webContents.send("history:changed", historyRows());
+        }
+      },
+    });
 
     app.setLoginItemSettings({ openAtLogin: state.config.autoLaunch });
 
@@ -189,6 +210,7 @@ function boot({
     const typer = createTyper({
       keyboard,
       Key,
+      typeBlock,
       isModifierDown,
       // Holding the record key (often AltGr) while live text waits is normal.
       isHoldActive: () => Boolean(state.controller && state.controller.isRecording()),
@@ -201,6 +223,7 @@ function boot({
       iconDir: path.join(__dirname, "..", "..", "assets", "tray"),
       onTogglePause: () => state.controller.setPaused(!state.controller.isPaused()),
       onOpenSettings: openSettings,
+      onOpenHistory: openHistory,
       onQuit: () => app.quit(),
       // createTray builds the menu once immediately, before the controller
       // below exists — report unpaused until it does.
@@ -222,6 +245,7 @@ function boot({
       openMicrosoftStream,
       microsoftTranscribe,
       copyToClipboard: clipboard ? (text) => clipboard.writeText(text) : null,
+      history: state.history,
       getConfig: () => state.config,
       notify,
       minDurationMs: 200,
@@ -233,6 +257,10 @@ function boot({
     if (!state.secrets.hasKey() && !state.secrets.hasGoogleKey() && !state.secrets.hasMicrosoftKey()) {
       notify("VoiceTyper", "Set your API key in Settings (tray icon → Settings).");
     }
+
+    // --- Timing history IPC ---
+    ipcMain.handle("history:get", async () => historyRows());
+    ipcMain.handle("history:clear", async () => state.history.clear());
 
     // --- Settings IPC ---
     ipcMain.handle("settings:get", async () => {

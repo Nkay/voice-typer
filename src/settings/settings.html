@@ -48,7 +48,11 @@
       <input id="modelMicrosoft" name="transcriptionModel" value="microsoft" type="checkbox" />
       <label for="modelMicrosoft" style="margin:0;font-weight:400;">Microsoft</label>
     </div>
-    <div class="hint">All checked models are asked at the same time; the first transcript is typed. Microsoft alone types confirmed text while you speak. Typing waits while Shift, Ctrl, Alt, AltGr or Win is down, so with a modifier as the record key the text starts when you release it.</div>
+    <div class="hint">All checked models are asked at the same time; the first transcript is typed, unless you choose a primary model below. Microsoft alone types confirmed text while you speak. Typing waits while Shift, Ctrl, Alt, AltGr or Win is down, so with a modifier as the record key the text starts when you release it.</div>
+    <label>Primary model
+      <select id="primaryModel"></select>
+      <div class="hint">With a primary model, its transcript is typed even if another checked model answers first. The primary gets 1.5 times the answer time of that other model; then the other transcript is typed. A primary that fails or hears nothing does not delay the other transcript.</div>
+    </label>
     <label>Language
       <select id="language">
         <option value="auto">Auto-detect</option>

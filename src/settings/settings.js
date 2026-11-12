@@ -66,6 +66,25 @@ function fillModelSelect(models, modelsError, saved) {
   }
 }
 
+// The primary model is one of the checked models, so the list follows the
+// checkboxes. A selection that gets unchecked falls back to "none".
+function fillPrimarySelect(selected) {
+  const select = document.getElementById("primaryModel");
+  const wanted = selected ?? select.value;
+  select.replaceChildren();
+  const none = document.createElement("option");
+  none.value = "";
+  none.textContent = "— none (the fastest model wins) —";
+  select.appendChild(none);
+  for (const box of document.querySelectorAll('input[name="transcriptionModel"]:checked')) {
+    const opt = document.createElement("option");
+    opt.value = box.value;
+    opt.textContent = document.querySelector(`label[for="${box.id}"]`).textContent;
+    select.appendChild(opt);
+  }
+  select.value = [...select.options].some((opt) => opt.value === wanted) ? wanted : "";
+}
+
 function setStatus(text, isError) {
   const status = document.getElementById("status");
   status.textContent = text;
@@ -92,7 +111,9 @@ async function init() {
       : "enter your Mistral API key";
     for (const box of document.querySelectorAll('input[name="transcriptionModel"]')) {
       box.checked = config.transcriptionModels.includes(box.value);
+      box.addEventListener("change", () => fillPrimarySelect());
     }
+    fillPrimarySelect(config.primaryModel);
     document.getElementById("googleApiKey").placeholder = hasGoogleKey
       ? "leave blank to keep current key"
       : "enter your Google API key";
@@ -119,6 +140,7 @@ async function init() {
             transcriptionModels: [...document.querySelectorAll('input[name="transcriptionModel"]:checked')].map(
               (box) => box.value
             ),
+            primaryModel: document.getElementById("primaryModel").value,
             microsoftEndpoint: document.getElementById("microsoftEndpoint").value,
             microsoftDeployment: document.getElementById("microsoftDeployment").value,
           },

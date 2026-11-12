@@ -21,8 +21,12 @@ const DEFAULTS = {
   sampleRate: 16000,
   micDeviceId: null,
   autoLaunch: false,
-  // Every checked model is asked at the same time; the first transcript wins.
+  // Every checked model is asked at the same time; the first transcript wins,
+  // unless `primaryModel` is set.
   transcriptionModels: ["mistral"],
+  // One of the checked models, or "" for none. The text of the primary model
+  // is preferred to a faster text of another model, within a time limit.
+  primaryModel: "",
   // Foundry resource root, e.g. "https://my-resource.services.ai.azure.com".
   // Not a secret; the key lives in secrets like the other providers' keys.
   microsoftEndpoint: "",
@@ -107,6 +111,7 @@ function validateConfig(config) {
   const models = Array.isArray(c.transcriptionModels) ? c.transcriptionModels : [];
   c.transcriptionModels = TRANSCRIPTION_MODELS.filter((m) => models.includes(m));
   if (c.transcriptionModels.length === 0) c.transcriptionModels = [...DEFAULTS.transcriptionModels];
+  if (!c.transcriptionModels.includes(c.primaryModel)) c.primaryModel = "";
   c.microsoftEndpoint = normalizeEndpoint(c.microsoftEndpoint);
   c.microsoftDeployment = nonEmptyString(c.microsoftDeployment, DEFAULTS.microsoftDeployment);
   return c;
