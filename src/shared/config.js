@@ -21,7 +21,8 @@ const DEFAULTS = {
   sampleRate: 16000,
   micDeviceId: null,
   autoLaunch: false,
-  // Every checked model is asked at the same time; the first transcript wins.
+  // Every checked model is asked at the same time; the first transcript wins,
+  // unless `primaryModel` is set.
   transcriptionModels: ["mistral"],
   // One of the checked models, or "" for none. The text of the primary model
   // is preferred to a faster text of another model, within a time limit.

@@ -47,7 +47,8 @@ too short to count still types nothing.
 ### Several models at once
 
 With more than one model checked, VoiceTyper asks all of them at the same time
-and types the first transcript that comes back; later answers are dropped. A
+and types the first transcript that comes back (unless you set a
+[primary model](#primary-model)); later answers are dropped. A
 model that fails or hears nothing does not stop the others, so you never lose a
 dictation to a single provider outage. Only when every model fails does a
 notification name the first error.
@@ -100,7 +101,9 @@ dictation. Hold the **summary modifier** during that last tap to get the
 summary as well. With **Microsoft** alone the text is typed while you speak,
 hands-free.
 
-There is no time limit: the recording runs until you tap the key. Remember
+Pausing VoiceTyper from the tray menu also stops the recording, and its
+transcript is typed. There is no time limit: the recording runs until you tap
+the key. Remember
 that Google rejects recordings of more than about seven minutes, and that with
 Microsoft checked the audio is sent while the recording runs.
 

@@ -41,23 +41,18 @@ async function startCapture(opts) {
   // shared variables can belong to a newer capture by then, so a capture that
   // was stopped in the meantime releases only what it opened itself.
   const stream = await navigator.mediaDevices.getUserMedia(constraints);
-  if (!current()) {
+  let context = null;
+  const release = () => {
     stream.getTracks().forEach((t) => t.stop());
-    return;
-  }
-  const context = new AudioContext();
-  try {
-    await context.audioWorklet.addModule("recorder-worklet.js");
-  } catch (err) {
-    stream.getTracks().forEach((t) => t.stop());
-    context.close();
+    if (context) context.close();
+  };
+  if (!current()) return release();
+  context = new AudioContext();
+  await context.audioWorklet.addModule("recorder-worklet.js").catch((err) => {
+    release();
     throw err;
-  }
-  if (!current()) {
-    stream.getTracks().forEach((t) => t.stop());
-    context.close();
-    return;
-  }
+  });
+  if (!current()) return release();
   mediaStream = stream;
   audioContext = context;
   sourceNode = audioContext.createMediaStreamSource(mediaStream);
@@ -120,11 +115,13 @@ function cleanup() {
 }
 
 window.capture.onStart((opts) => {
-  const before = generation;
-  startCapture(opts).catch((err) => {
+  const run = startCapture(opts);
+  // startCapture counts up before its first wait, so this is its own number.
+  const mine = generation;
+  run.catch((err) => {
     console.error(err);
     // A capture that failed after a newer one started must not stop that one.
-    if (generation !== before + 1) return;
+    if (mine !== generation) return;
     recording = false;
     cleanup();
   });

@@ -123,44 +123,29 @@ function boot({
     return win;
   };
 
-  const openSettings = () => {
-    if (state.settingsWin && !state.settingsWin.isDestroyed()) {
-      state.settingsWin.focus();
+  // Opens the window of the folder src/<name>, or focuses it when it is open.
+  const openWindow = (name, options) => {
+    const key = `${name}Win`;
+    if (state[key] && !state[key].isDestroyed()) {
+      state[key].focus();
       return;
     }
-    state.settingsWin = new BrowserWindow({
-      width: 420,
-      height: 700,
-      resizable: false,
-      title: "VoiceTyper Settings",
+    state[key] = new BrowserWindow({
+      ...options,
       webPreferences: {
-        preload: path.join(__dirname, "..", "settings", "settings-preload.js"),
+        preload: path.join(__dirname, "..", name, `${name}-preload.js`),
         contextIsolation: true,
         nodeIntegration: false,
       },
     });
-    state.settingsWin.setMenuBarVisibility(false);
-    state.settingsWin.loadFile(path.join(__dirname, "..", "settings", "settings.html"));
+    state[key].setMenuBarVisibility(false);
+    state[key].loadFile(path.join(__dirname, "..", name, `${name}.html`));
   };
 
-  const openHistory = () => {
-    if (state.historyWin && !state.historyWin.isDestroyed()) {
-      state.historyWin.focus();
-      return;
-    }
-    state.historyWin = new BrowserWindow({
-      width: 560,
-      height: 640,
-      title: "VoiceTyper Timing History",
-      webPreferences: {
-        preload: path.join(__dirname, "..", "history", "history-preload.js"),
-        contextIsolation: true,
-        nodeIntegration: false,
-      },
-    });
-    state.historyWin.setMenuBarVisibility(false);
-    state.historyWin.loadFile(path.join(__dirname, "..", "history", "history.html"));
-  };
+  const openSettings = () =>
+    openWindow("settings", { width: 420, height: 700, resizable: false, title: "VoiceTyper Settings" });
+
+  const openHistory = () => openWindow("history", { width: 560, height: 640, title: "VoiceTyper Timing History" });
 
   const historyRows = () => state.history.list().map(describeTiming);
 

@@ -7,27 +7,11 @@ const PROVIDER_LABELS = { MicrosoftError: "Microsoft", GoogleError: "Google" };
 // two copy the last transcripts, three start a recording that continues after
 // the release. A tap is known only at its release, so a longer press still
 // records as usual.
-const DOUBLE_PRESS_MS = 400;
+const TAP_MS = 400;
 
 // When another model answers before the primary model, the primary gets until
 // this many times the answer time of that model. Then the other text is typed.
 const PRIMARY_PATIENCE = 1.5;
-
-// One entry of the timing history. `at` is the moment the key came up; every
-// duration is in milliseconds. `models` holds one record per asked model.
-function newTiming(fields) {
-  return {
-    ...fields,
-    queueMs: 0,
-    models: [],
-    primaryWaitMs: null,
-    summaryMs: null,
-    summaryFailed: false,
-    typingMs: null,
-    chars: 0,
-    totalMs: 0,
-  };
-}
 
 class Controller {
   constructor(deps) {
@@ -45,8 +29,8 @@ class Controller {
     this.openMicrosoftStream = deps.openMicrosoftStream;
     this.microsoftTranscribe = deps.microsoftTranscribe;
     this.copyToClipboard = deps.copyToClipboard || null;
-    // Optional: where the duration of each step of a dictation is recorded.
-    this.history = deps.history || null;
+    // Where the duration of each step of a dictation is recorded.
+    this.history = deps.history || { add() {}, update() {} };
     this.getConfig = deps.getConfig;
     this.notify = deps.notify;
     this.minDurationMs = deps.minDurationMs != null ? deps.minDurationMs : 200;
@@ -71,6 +55,9 @@ class Controller {
     // interrupted.
     this.pendingCopy = null;
     this.heldCopy = false;
+    // How each capture ended, by capture id, from the release until its WAV
+    // arrives. A new press can come before that WAV.
+    this.stops = new Map();
     // Every transcript of the last dictation, in arrival order, for the double
     // press. A race keeps adding the slower answers after the first is typed.
     this.lastTranscripts = [];
@@ -105,6 +92,9 @@ class Controller {
 
   setPaused(paused) {
     this.paused = Boolean(paused);
+    // No key is held during a triple-tap recording, so it would go on while
+    // the app shows "paused". It ends like with the stop tap.
+    if (this.paused && this.latched) this._onStop();
     this._idle();
   }
 
@@ -156,10 +146,6 @@ class Controller {
     }
     // Also true for the tap that stops a triple-tap recording.
     if (this.recording) return;
-    if (this.pendingCopy) {
-      this.pendingCopy = null;
-      this.heldCopy = true;
-    }
     // Here, not only when Microsoft is checked: a stale live lane blocks every
     // later dictation, whatever the models are now.
     this._dropStaleStreams();
@@ -169,6 +155,10 @@ class Controller {
     const captureId = ++this.captureSeq;
     if (streams && !this._openStream(captureId, models.length === 1, cfg)) return;
 
+    if (this.pendingCopy) {
+      this.pendingCopy = null;
+      this.heldCopy = true;
+    }
     this.recording = true;
     this.currentCaptureId = captureId;
     this.pressedAt = this.now();
@@ -248,10 +238,9 @@ class Controller {
     this.heldCopy = false;
     if (this.latched) {
       this.latched = false;
-      this.taps = 0;
     } else {
-      const isTap = now - this.pressedAt < DOUBLE_PRESS_MS;
-      const inRow = this.pressedAt - this.releasedAt < DOUBLE_PRESS_MS;
+      const isTap = now - this.pressedAt < TAP_MS;
+      const inRow = this.pressedAt - this.releasedAt < TAP_MS;
       this.taps = !isTap ? 0 : inRow ? this.taps + 1 : 1;
       if (this.taps === 3) {
         // The recording of this tap goes on until the next tap; the copy of
@@ -266,12 +255,13 @@ class Controller {
     this.releasedAt = now;
     this.lastHoldMs = now - this.pressedAt;
     this.pendingMode = payload && payload.mode === "summary" ? "summary" : "transcript";
+    this.stops.set(this.currentCaptureId, { holdMs: this.lastHoldMs, mode: this.pendingMode, releasedAt: now });
     const rec = this.streams.get(this.currentCaptureId);
     if (rec) rec.stoppedAt = now;
     this.recorder.stop();
     // A press that interrupted the wait of a double press was no third tap.
     if (heldCopy) this._copyTranscripts();
-    // Both taps are too short to type anything; their recordings are dropped.
+    // A double press; the recordings of both taps are too short to count.
     if (this.taps === 2) this._copyAfterWait();
   }
 
@@ -280,7 +270,7 @@ class Controller {
   _copyAfterWait() {
     const pending = {};
     this.pendingCopy = pending;
-    this.wait(DOUBLE_PRESS_MS).then(() => {
+    this.wait(TAP_MS).then(() => {
       if (this.pendingCopy !== pending) return;
       this.pendingCopy = null;
       this._copyTranscripts();
@@ -289,12 +279,18 @@ class Controller {
 
   _onWav(bytes, captureId) {
     const wavAt = this.now();
-    const mode = this.pendingMode;
+    // The last release stands in for a WAV whose own release is not known.
+    const stop = this.stops.get(captureId) || {
+      holdMs: this.lastHoldMs,
+      mode: this.pendingMode,
+      releasedAt: this.releasedAt,
+    };
+    this.stops.delete(captureId);
     const rec = this.streams.get(captureId);
     this.streams.delete(captureId);
     const samples = (bytes.length - 44) / 2;
     const durationMs = (samples / this.sampleRate) * 1000;
-    if (this.lastHoldMs < this.minHoldMs || durationMs < this.minDurationMs) {
+    if (stop.holdMs < this.minHoldMs || durationMs < this.minDurationMs) {
       if (rec) this._discardStream(rec);
       this._idle();
       return;
@@ -304,15 +300,25 @@ class Controller {
       this._flushLive(rec);
     }
     // A WAV without a release before it has no release time to measure from.
-    const releasedAt = Number.isFinite(this.releasedAt) ? this.releasedAt : wavAt;
-    const timing = newTiming({
+    const releasedAt = Number.isFinite(stop.releasedAt) ? stop.releasedAt : wavAt;
+    // One entry of the timing history. `at` is the moment the key came up;
+    // every duration is in milliseconds. `models` holds one record per asked
+    // model.
+    const timing = {
       at: releasedAt,
-      mode,
       live: Boolean(rec && rec.lane),
       recordMs: Math.round(durationMs),
       audioMs: wavAt - releasedAt,
-    });
-    this.queue.push({ bytes, mode, rec, timing, wavAt });
+      queueMs: 0,
+      models: [],
+      primaryWaitMs: null,
+      summaryMs: null,
+      summaryFailed: false,
+      typingMs: null,
+      chars: 0,
+      totalMs: 0,
+    };
+    this.queue.push({ bytes, mode: stop.mode, rec, timing });
     this._pump().catch((err) => console.error("VoiceTyper: pump failed", err));
   }
 
@@ -321,9 +327,9 @@ class Controller {
     this.working = true;
     try {
       while (this.queue.length > 0) {
-        const { bytes, mode, rec, timing, wavAt } = this.queue.shift();
+        const { bytes, mode, rec, timing } = this.queue.shift();
         this._setState("processing");
-        timing.queueMs = this.now() - wavAt;
+        timing.queueMs = this.now() - (timing.at + timing.audioMs);
         try {
           const cfg = this.getConfig();
           if (rec && rec.lane) await this._finishLive(rec, mode, cfg, timing);
@@ -333,7 +339,7 @@ class Controller {
           this.notify("VoiceTyper", this._errorMessage(err));
         }
         timing.totalMs = this.now() - timing.at;
-        this._history("add", timing);
+        this.history.add(timing);
       }
     } finally {
       this.working = false;
@@ -341,27 +347,18 @@ class Controller {
     }
   }
 
-  // The history is a diagnostic; a failure in it must not stop a dictation.
-  _history(method, timing) {
-    if (!this.history) return;
-    try {
-      this.history[method](timing);
-    } catch (err) {
-      console.error("VoiceTyper: timing history failed", err);
-    }
-  }
-
   // Adds a model to the timing and returns the function that records how its
   // request, sent at `startedAt`, ended. A slow model can end after the entry
   // is in the history.
-  _trackModel(timing, label, startedAt) {
+  _trackModel(timing, label, startedAt, primary = false) {
     const model = { label, ms: null, status: "pending", typed: false };
+    if (primary) model.primary = true;
     timing.models.push(model);
     return (status, err) => {
       model.ms = this.now() - startedAt;
       model.status = status;
       if (status === "failed") model.error = (err && err.code) || "ERROR";
-      this._history("update", timing);
+      this.history.update(timing);
       return model;
     };
   }
@@ -393,8 +390,9 @@ class Controller {
     if (mode === "summary" && transcript) {
       const summary = await this._summarizeOrNotify(transcript, cfg, timing);
       if (summary) {
-        rec.lane.push(separatorText(cfg.separator) + summary);
-        chars += separatorText(cfg.separator).length + summary.length;
+        const rest = separatorText(cfg.separator) + summary;
+        rec.lane.push(rest);
+        chars += rest.length;
       }
     }
     const closeAt = this.now();
@@ -416,9 +414,8 @@ class Controller {
     // An empty transcript rejects with null, so a faster silent answer does
     // not hide a slower real one.
     const add = (label, provider, run) => {
-      const settle = this._trackModel(timing, label, startedAt);
       const primary = provider === cfg.primaryModel;
-      if (primary) timing.models.at(-1).primary = true;
+      const settle = this._trackModel(timing, label, startedAt, primary);
       runs.push({
         primary,
         promise: run.then(

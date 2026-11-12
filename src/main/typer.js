@@ -49,8 +49,8 @@ function createTyper({
   // layer in one call.
   typeBlock = (text) => keyboard.type(text),
   // A block is sent in one call without a pause, so the modifier check before
-  // it is nearly as good as a check before each character. The pause between two blocks lets
-  // the target app keep up.
+  // it is nearly as good as a check before each character. The pause between
+  // two blocks lets the target app keep up.
   blockSize = 20,
   blockPauseMs = 2,
 }) {

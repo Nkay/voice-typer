@@ -3,8 +3,8 @@ import { createTyper, sanitize, separatorText } from "../src/main/typer.js";
 
 const Key = { LeftShift: "LeftShift", Return: "Return" };
 
-// The typer hands nut-js one character at a time (so it can check the
-// modifier keys in between). Adjacent characters are merged here so the
+// The typer hands nut-js blocks of characters (so it can check the modifier
+// keys between two blocks). Adjacent blocks are merged here so the
 // expectations read as the text that reaches the focused field.
 function fakeKeyboard() {
   const calls = [];

@@ -70,7 +70,7 @@ function fillModelSelect(models, modelsError, saved) {
 // checkboxes. A selection that gets unchecked falls back to "none".
 function fillPrimarySelect(selected) {
   const select = document.getElementById("primaryModel");
-  const wanted = selected === undefined ? select.value : selected;
+  const wanted = selected ?? select.value;
   select.replaceChildren();
   const none = document.createElement("option");
   none.value = "";

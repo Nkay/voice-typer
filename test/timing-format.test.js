@@ -3,7 +3,6 @@ import { describeTiming } from "../src/shared/timing-format.js";
 
 const base = (extra = {}) => ({
   at: 1000,
-  mode: "transcript",
   live: false,
   recordMs: 6400,
   audioMs: 80,
@@ -60,6 +59,12 @@ describe("describeTiming", () => {
     expect([row(view, "Lost").value, row(view, "Lost").note]).toEqual(["–", "no answer"]);
   });
 
+  it("names a failure without an error code", () => {
+    const view = describeTiming(base({ models: [{ label: "Mistral", ms: 300, status: "failed", typed: false }] }));
+
+    expect(row(view, "Mistral").note).toBe("failed (ERROR)");
+  });
+
   it("says which model is the primary", () => {
     const view = describeTiming(
       base({
@@ -100,14 +105,14 @@ describe("describeTiming", () => {
   it("shows the summary step only for a dictation with a summary", () => {
     expect(row(describeTiming(base()), "summary")).toBeUndefined();
 
-    const view = describeTiming(base({ mode: "summary", summaryMs: 1800 }));
+    const view = describeTiming(base({ summaryMs: 1800 }));
 
     expect([row(view, "summary").value, row(view, "summary").note]).toEqual(["1.80 s", ""]);
     expect(view.rows.map((r) => r.label)).toEqual(["audio ready", "queue wait", "Mistral", "summary", "typing"]);
   });
 
   it("says when the summary failed", () => {
-    const view = describeTiming(base({ mode: "summary", summaryMs: 10000, summaryFailed: true }));
+    const view = describeTiming(base({ summaryMs: 10000, summaryFailed: true }));
 
     expect(row(view, "summary").note).toBe("failed");
   });

@@ -556,7 +556,6 @@ describe("boot wiring", () => {
 describe("timing history window", () => {
   const storedEntry = {
     at: 1000,
-    mode: "transcript",
     live: false,
     recordMs: 6400,
     audioMs: 80,

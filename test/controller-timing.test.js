@@ -108,7 +108,6 @@ describe("Controller timing history", () => {
     expect(h.history.list()).toEqual([
       {
         at: 3000,
-        mode: "transcript",
         live: false,
         recordMs: 3000,
         audioMs: 80,
@@ -204,7 +203,6 @@ describe("Controller timing history", () => {
     await flush();
 
     const [entry] = h.history.list();
-    expect(entry.mode).toBe("summary");
     expect(entry.summaryMs).toBe(1800);
     expect(entry.summaryFailed).toBe(false);
     expect(entry.typingMs).toBe(500);
@@ -254,7 +252,6 @@ describe("Controller timing history", () => {
     expect(h.history.list()).toEqual([
       {
         at: 3000,
-        mode: "transcript",
         live: true,
         recordMs: 3000,
         audioMs: 80,
@@ -282,10 +279,13 @@ describe("Controller timing history", () => {
   it("still types when the history fails", async () => {
     const typed = [];
     const h = harness({
-      history: {
-        add() { throw new Error("disk full"); },
-        update() { throw new Error("disk full"); },
-      },
+      // The file cannot be written and the listener throws.
+      history: createTimingHistory({
+        filePath: path.join(os.tmpdir(), "voicetyper-missing-dir-xyz", "timings.json"),
+        onChange: () => {
+          throw new Error("window gone");
+        },
+      }),
       type: async (t) => typed.push(t),
     });
 

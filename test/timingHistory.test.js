@@ -110,6 +110,25 @@ describe("timing history", () => {
     expect(history.list().map((e) => e.at)).toEqual([1]);
   });
 
+  it("keeps working when the change listener throws", () => {
+    const history = createTimingHistory({
+      filePath: tmpFile(),
+      onChange: () => {
+        throw new Error("window gone");
+      },
+    });
+
+    expect(() => history.add(entry(1))).not.toThrow();
+    expect(history.list().map((e) => e.at)).toEqual([1]);
+  });
+
+  it("drops damaged entries of the file and keeps the others", () => {
+    const filePath = tmpFile();
+    fs.writeFileSync(filePath, JSON.stringify([null, "text", { at: 1 }, entry(2)]), "utf8");
+
+    expect(createTimingHistory({ filePath }).list()).toEqual([entry(2)]);
+  });
+
   it("marks a model that never answered before the restart as unfinished", () => {
     const filePath = tmpFile();
     createTimingHistory({ filePath }).add(

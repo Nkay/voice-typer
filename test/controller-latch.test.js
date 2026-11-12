@@ -45,8 +45,11 @@ function harness(overrides = {}) {
     googleSummarize: async () => "google-summary",
     openMicrosoftStream: (opts) => {
       const session = {
+        cancelled: false,
         append() {},
-        cancel() {},
+        cancel() {
+          this.cancelled = true;
+        },
         finish: () => new Promise(() => {}),
         delta: (text) => opts.onDelta(text),
       };
@@ -79,8 +82,8 @@ function harness(overrides = {}) {
     advance(holdMs);
     hotkey.emit("record-stop", { mode });
   };
-  // The audio of the capture that just stopped arrives.
-  const fireWav = (ms) => wavCb(wavOfMs(ms), recorder.starts.at(-1).id);
+  // The audio of a capture arrives: by default of the one that started last.
+  const fireWav = (ms, id = recorder.starts.at(-1).id) => wavCb(wavOfMs(ms), id);
   // The recorder sends the audio of each tap, as the real one does.
   const tripleTap = () => {
     advance(1000);
@@ -218,8 +221,47 @@ describe("Controller triple tap", () => {
     await flush();
 
     h.press(100);
+    h.press(100);
 
     expect(h.controller.isRecording()).toBe(false);
+  });
+
+  it("still types when another tap follows the stop tap before the audio arrives", async () => {
+    const h = harness();
+    h.tripleTap();
+    h.press(100, { gapMs: 5000 });
+
+    h.press(100);
+    h.fireWav(5200, h.recorder.starts[2].id);
+    await flush();
+
+    expect(h.typed).toEqual(["text"]);
+  });
+
+  it("keeps the summary of the stop tap when another tap follows before the audio arrives", async () => {
+    const h = harness();
+    h.tripleTap();
+    h.press(100, { gapMs: 5000, mode: "summary" });
+
+    h.press(100);
+    h.fireWav(5200, h.recorder.starts[2].id);
+    await flush();
+
+    expect(h.typed).toEqual([{ parts: ["text", "summary"], separator: "blank-line" }]);
+  });
+
+  it("stops and types the transcript when the app is paused", async () => {
+    const h = harness();
+    h.tripleTap();
+    h.advance(5000);
+
+    h.controller.setPaused(true);
+    h.fireWav(5100);
+    await flush();
+
+    expect(h.recorder.stops).toBe(3);
+    expect(h.controller.isRecording()).toBe(false);
+    expect(h.typed).toEqual(["text"]);
   });
 
   it("types Microsoft live text while the recording runs", async () => {
@@ -233,5 +275,18 @@ describe("Controller triple tap", () => {
     await flush();
 
     expect(h.typed).toEqual(["live text"]);
+  });
+
+  it("keeps the Microsoft session of a long recording when the stop tap goes down", () => {
+    const h = harness({
+      config: { transcriptionModels: ["microsoft"], microsoftEndpoint: "https://res.services.ai.azure.com" },
+    });
+    h.tripleTap();
+
+    h.advance(60000);
+    h.hotkey.emit("record-start");
+
+    expect(h.sessions.at(-1).cancelled).toBe(false);
+    expect(h.sessions).toHaveLength(3);
   });
 });
