@@ -45,6 +45,17 @@ function describeTiming(entry) {
   if (entry.primaryWaitMs != null) {
     rows.push({ label: "wait for primary", value: seconds(entry.primaryWaitMs), note: "", ms: entry.primaryWaitMs });
   }
+  if (entry.mergeWaitMs != null) {
+    rows.push({ label: "wait for other models", value: seconds(entry.mergeWaitMs), note: "", ms: entry.mergeWaitMs });
+  }
+  if (entry.mergeMs != null) {
+    rows.push({
+      label: "merge",
+      value: seconds(entry.mergeMs),
+      note: entry.mergeFailed ? "failed" : "",
+      ms: entry.mergeMs,
+    });
+  }
   if (entry.summaryMs != null) {
     rows.push({
       label: "summary",

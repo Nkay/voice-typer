@@ -389,6 +389,26 @@ describe("boot wiring", () => {
     expect(result.error).toMatch(/Google API key/i);
   });
 
+  it("settings:save rejects a google/ merge model without a Google key", async () => {
+    const { deps, captured } = fakeDeps();
+    fs.writeFileSync(path.join(captured.userDataDir, "key.enc"), Buffer.from("mistral-key"));
+    boot(deps);
+    captured.readyCb();
+
+    const result = await captured.handlers["settings:save"](null, {
+      config: {
+        recordKey: "RIGHT ALT",
+        summaryModifier: "F13",
+        transcriptionModels: ["mistral"],
+        mergeModel: "google/gemini-flash-lite",
+      },
+      apiKey: "",
+      googleApiKey: "",
+    });
+    expect(result.ok).toBe(false);
+    expect(result.error).toBe("Google API key is required for this merge model.");
+  });
+
   it("settings:save accepts the Google model when Google key exists", async () => {
     const { deps, captured } = fakeDeps();
     fs.writeFileSync(path.join(captured.userDataDir, "google-key.enc"), Buffer.from("gk"));

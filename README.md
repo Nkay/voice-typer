@@ -80,6 +80,25 @@ recording after the release like the other providers. The non-streaming model
 uses the same key and resource, through the resource's Speech host
 (`<resource>.cognitiveservices.azure.com`).
 
+### Merge model
+
+With two or more models checked, a fast chat model can write one text from
+their transcripts. Select it as **Merge model** in Settings, for example a
+Gemini Flash-Lite or a small Mistral model. The merge model:
+
+- takes the words that make the most sense where the transcripts differ,
+- removes fillers such as "um", "uh", "äh" and "ähm", and stutters,
+- spells the terms of your [dictionary](#dictionary) as listed,
+- keeps everything else as you said it.
+
+VoiceTyper waits for the other models until 2 times the answer time of the
+first one: an answer after 1.0 s gives the others until 2.0 s. Then it merges
+the transcripts that arrived. When only one transcript arrived, or when the
+merge fails, a transcript is typed as without a merge model (the primary's, if
+it arrived). The timing history shows the wait and the merge as their own
+steps, and a double press copies the merged text under `[Merged]`. Microsoft
+alone (live typing) is never merged.
+
 ### Copy every transcript
 
 Double-press the record key (two short taps, the second within 0.4 s of the
@@ -286,6 +305,9 @@ The same Settings window lets you configure:
 - **Primary model** — one of the checked models, or none. The transcript of the
   primary is preferred to a faster transcript of another model, within a time
   limit (see [Primary model](#primary-model)). Defaults to none.
+- **Merge model** — a chat model that writes one text from the transcripts of
+  the checked models, or none (see [Merge model](#merge-model)). The list is
+  the same as for the summary model. Defaults to none.
 - **Language** — `auto` (auto-detect), `de` (German), or `en` (English). Applies
   to whichever provider is in use.
 - **Dictionary file** — the [dictionary](#dictionary). **Choose…** selects an
@@ -332,6 +354,7 @@ Non-secret settings are stored as JSON at:
 That includes `transcriptionModels` (a list of `"mistral"`, `"google"` and
 `"microsoft"`; an older `transcriptionProvider` value is read once and
 converted), `primaryModel` (one of the checked models, or `""` for none),
+`mergeModel` (a provider-prefixed chat model, or `""` for none),
 `microsoftEndpoint`, `microsoftDeployment`, `dictionaryPath`, and the
 provider-prefixed `summaryModel`. The API keys are stored separately
 (encrypted, as `key.enc` for Mistral, `google-key.enc` for Google and

@@ -1,6 +1,7 @@
 const { createTypingLanes } = require("./typingLanes.js");
 const { separatorText } = require("./typer.js");
 const { EMPTY: EMPTY_DICTIONARY, applyDictionary, liveCut } = require("../shared/dictionary.js");
+const { MERGE_PROMPT, mergeInput } = require("../shared/merger.js");
 
 const PROVIDER_LABELS = { MicrosoftError: "Microsoft", GoogleError: "Google" };
 
@@ -13,6 +14,10 @@ const TAP_MS = 400;
 // When another model answers before the primary model, the primary gets until
 // this many times the answer time of that model. Then the other text is typed.
 const PRIMARY_PATIENCE = 1.5;
+
+// With a merge model, the other models get until this many times the answer
+// time of the first model. Then the texts that arrived are merged.
+const MERGE_PATIENCE = 2;
 
 class Controller {
   constructor(deps) {
@@ -325,6 +330,9 @@ class Controller {
       queueMs: 0,
       models: [],
       primaryWaitMs: null,
+      mergeWaitMs: null,
+      mergeMs: null,
+      mergeFailed: false,
       summaryMs: null,
       summaryFailed: false,
       typingMs: null,
@@ -473,7 +481,10 @@ class Controller {
     }
     if (rec) add("Microsoft (live)", "microsoft", rec.session.finish());
 
-    const winner = await this._pickWinner(runs, timing, startedAt);
+    const winner =
+      cfg.mergeModel && runs.length > 1
+        ? await this._mergeTexts(runs, dict, cfg, timing, startedAt)
+        : await this._pickWinner(runs, timing, startedAt);
     if (!winner) {
       // Every model failed or heard nothing; the first real error is reported.
       const settled = await Promise.allSettled(runs.map((run) => run.promise));
@@ -515,6 +526,48 @@ class Controller {
     return late === timedOut || late === null ? early.other : late;
   }
 
+  // Resolves like _pickWinner. Waits for the texts of all models, at most
+  // MERGE_PATIENCE times the answer time of the first one, and gives them to
+  // the merge model. One text, or a failed merge, gives the text of the
+  // primary model if it came, else the first text.
+  async _mergeTexts(runs, dict, cfg, timing, startedAt) {
+    const arrived = [];
+    const all = Promise.allSettled(runs.map((run) => run.promise.then((winner) => arrived.push(winner))));
+    if (!(await Promise.any(runs.map((run) => run.promise)).catch(() => null))) return null;
+
+    const waitFrom = this.now();
+    await Promise.race([all, this.wait((waitFrom - startedAt) * (MERGE_PATIENCE - 1))]);
+    timing.mergeWaitMs = this.now() - waitFrom;
+    // Later texts are not merged.
+    const texts = [...arrived];
+    if (texts.length === 1) return texts[0];
+
+    const merged = await this._mergeOrNotify(texts, dict, cfg, timing);
+    if (!merged) return texts.find((t) => t.model.primary) || texts[0];
+    this.lastTranscripts.push({ label: "Merged", text: merged });
+    for (const t of texts) t.model.typed = true;
+    return { model: texts[0].model, text: merged };
+  }
+
+  // Returns the merged text, or null after telling the user the merge failed.
+  async _mergeOrNotify(texts, dict, cfg, timing) {
+    const startedAt = this.now();
+    try {
+      const input = mergeInput(
+        texts.map((t) => ({ label: t.model.label, text: t.text })),
+        dict.terms
+      );
+      return applyDictionary(await this._chat(cfg.mergeModel, MERGE_PROMPT, input), dict);
+    } catch (err) {
+      console.error("VoiceTyper: merge failed", err);
+      this.notify("VoiceTyper", "Merge failed — typed one transcript");
+      timing.mergeFailed = true;
+      return null;
+    } finally {
+      timing.mergeMs = this.now() - startedAt;
+    }
+  }
+
   async _typeResult(text, mode, cfg, timing) {
     const summary = mode === "summary" ? await this._summarizeOrNotify(text, cfg, timing) : null;
     const startedAt = this.now();
@@ -528,18 +581,7 @@ class Controller {
   async _summarizeOrNotify(text, cfg, timing) {
     const startedAt = this.now();
     try {
-      const isGoogle = cfg.summaryModel.startsWith("google/");
-      const model = cfg.summaryModel.replace(/^(google|mistral)\//, "");
-      const summarizeFn = isGoogle ? this.googleSummarize : this.summarize;
-      const apiKey = isGoogle ? this.getGoogleApiKey() : this.getApiKey();
-
-      return await summarizeFn(text, {
-        apiKey,
-        model,
-        prompt: cfg.summaryPrompt,
-        timeoutMs: 10000,
-        maxAttempts: 1,
-      });
+      return await this._chat(cfg.summaryModel, cfg.summaryPrompt, text);
     } catch (err) {
       console.error("VoiceTyper: summarization failed", err);
       this.notify("VoiceTyper", "Summary failed — typed transcript only");
@@ -548,6 +590,20 @@ class Controller {
     } finally {
       timing.summaryMs = this.now() - startedAt;
     }
+  }
+
+  // Sends `text` to a chat model: "google/<id>", or "mistral/<id>" or "<id>"
+  // for Mistral.
+  _chat(modelId, prompt, text) {
+    const isGoogle = modelId.startsWith("google/");
+    const chatFn = isGoogle ? this.googleSummarize : this.summarize;
+    return chatFn(text, {
+      apiKey: isGoogle ? this.getGoogleApiKey() : this.getApiKey(),
+      model: modelId.replace(/^(google|mistral)\//, ""),
+      prompt,
+      timeoutMs: 10000,
+      maxAttempts: 1,
+    });
   }
 
   async _safeType(fn) {

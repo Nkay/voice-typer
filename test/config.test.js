@@ -266,6 +266,12 @@ describe("summaryModifierError", () => {
     }
   });
 
+  it("has no merge model by default and keeps a chosen one", () => {
+    expect(cfg.mergeConfig({}).mergeModel).toBe("");
+    expect(cfg.mergeConfig({ mergeModel: " google/gemini-flash-lite " }).mergeModel).toBe("google/gemini-flash-lite");
+    expect(cfg.mergeConfig({ mergeModel: 5 }).mergeModel).toBe("");
+  });
+
   it("falls back to the default deployment for a blank one", () => {
     expect(cfg.mergeConfig({ microsoftDeployment: "  " }).microsoftDeployment).toBe("MAI-Transcribe-2-Streaming");
     expect(cfg.mergeConfig({ microsoftDeployment: " my-deploy " }).microsoftDeployment).toBe("my-deploy");

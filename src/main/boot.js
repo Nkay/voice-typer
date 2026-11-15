@@ -351,6 +351,9 @@ function boot({
       if (candidate.summaryModel.startsWith("google/") && !willHaveGoogleKey) {
         return { ok: false, error: "Google API key is required for this summary model." };
       }
+      if (candidate.mergeModel.startsWith("google/") && !willHaveGoogleKey) {
+        return { ok: false, error: "Google API key is required for this merge model." };
+      }
       if (candidate.dictionaryPath && !isAllowedDictionary(candidate.dictionaryPath)) {
         return { ok: false, error: "Select the dictionary file with Choose… or New…." };
       }

@@ -6,6 +6,7 @@ import path from "path";
 import { Controller } from "../src/main/controller.js";
 import { createTimingHistory } from "../src/main/timingHistory.js";
 import { TranscriberError } from "../src/shared/transcriber.js";
+import { parseDictionary } from "../src/shared/dictionary.js";
 
 function wavOfMs(ms, sampleRate = 16000) {
   const samples = Math.round((ms / 1000) * sampleRate);
@@ -92,6 +93,7 @@ function harness(overrides = {}) {
     minHoldMs: 1000,
     now: () => nowMs,
     sampleRate: 16000,
+    ...overrides.deps,
   });
   controller.start();
 
@@ -303,5 +305,135 @@ describe("Controller primary model", () => {
     await flush();
 
     expect(h.history.list()[0].primaryWaitMs).toBeNull();
+  });
+});
+
+describe("Controller merge model", () => {
+  // Google answers first unless a test says otherwise. The merge model is a
+  // Google chat model; each call is recorded and answered by `answer`.
+  function mergeHarness({ config = {}, answer = async () => "merged text", dictionary } = {}) {
+    const calls = [];
+    const deps = {
+      googleSummarize: async (text, opts) => {
+        calls.push({ text, opts });
+        return answer(text, opts);
+      },
+    };
+    if (dictionary) deps.dictionary = { load: async () => dictionary, current: () => dictionary };
+    const h = harness({ config: { primaryModel: "", mergeModel: "google/gemini-flash-lite", ...config }, deps });
+    return { ...h, calls };
+  }
+
+  it("merges the texts of both models and types the merged text", async () => {
+    const h = mergeHarness();
+    await h.dictate();
+    h.advance(1000);
+    h.google.resolve("google text");
+    await flush();
+    h.advance(400);
+    h.mistral.resolve("mistral text");
+    await flush();
+
+    expect(h.typed).toEqual(["merged text"]);
+    expect(h.calls).toHaveLength(1);
+    expect(h.calls[0].opts).toMatchObject({ apiKey: "google-key", model: "gemini-flash-lite" });
+    expect(h.calls[0].text).toContain('<transcript model="Google">\ngoogle text\n</transcript>');
+    expect(h.calls[0].text).toContain('<transcript model="Mistral">\nmistral text\n</transcript>');
+    const entry = h.history.list()[0];
+    expect(entry.mergeWaitMs).toBe(400);
+    expect(entry.models.map((m) => m.typed)).toEqual([true, true]);
+  });
+
+  it("waits for the other model until 2 times the answer time of the first one", async () => {
+    const h = mergeHarness();
+    await h.dictate();
+    h.advance(1000);
+    h.google.resolve("google text");
+    await flush();
+
+    expect(h.typed).toEqual([]);
+    expect(h.waits.map((w) => w.ms)).toEqual([1000]);
+  });
+
+  it("types the first text without a merge when the other model is too late", async () => {
+    const h = mergeHarness();
+    await h.dictate();
+    h.advance(1000);
+    h.google.resolve("google text");
+    await flush();
+    h.advance(1000);
+    h.waits[0].end();
+    await flush();
+    h.mistral.resolve("late text");
+    await flush();
+
+    expect(h.typed).toEqual(["google text"]);
+    expect(h.calls).toEqual([]);
+  });
+
+  it("types the one text without a merge when the other model fails", async () => {
+    const h = mergeHarness();
+    await h.dictate();
+    h.mistral.reject(new TranscriberError("TIMEOUT", "timed out"));
+    h.google.resolve("google text");
+    await flush();
+
+    expect(h.typed).toEqual(["google text"]);
+    expect(h.calls).toEqual([]);
+    expect(h.notifications).toEqual([]);
+  });
+
+  it("types the primary text and says so when the merge fails", async () => {
+    const h = mergeHarness({
+      config: { primaryModel: "mistral" },
+      answer: async () => {
+        throw new Error("chat down");
+      },
+    });
+    await h.dictate();
+    h.google.resolve("google text");
+    await flush();
+    h.mistral.resolve("mistral text");
+    await flush();
+
+    expect(h.typed).toEqual(["mistral text"]);
+    expect(h.notifications).toEqual(["Merge failed — typed one transcript"]);
+    expect(h.history.list()[0].mergeFailed).toBe(true);
+  });
+
+  it("gives the dictionary terms to the merge model and corrects its answer", async () => {
+    const h = mergeHarness({
+      dictionary: parseDictionary("VoiceTyper\nchax\n"),
+      answer: async () => "I use voicetyper at Chax",
+    });
+    await h.dictate();
+    h.google.resolve("google text");
+    h.mistral.resolve("mistral text");
+    await flush();
+
+    expect(h.calls[0].text).toMatch(/^<dictionary>\nVoiceTyper\nchax\n<\/dictionary>/);
+    expect(h.typed).toEqual(["I use VoiceTyper at chax"]);
+  });
+
+  it("does not merge with only one checked model", async () => {
+    const h = mergeHarness({ config: { transcriptionModels: ["mistral"] } });
+    await h.dictate();
+    h.mistral.resolve("mistral text");
+    await flush();
+
+    expect(h.typed).toEqual(["mistral text"]);
+    expect(h.calls).toEqual([]);
+  });
+
+  it("reports the error when every model fails", async () => {
+    const h = mergeHarness();
+    await h.dictate();
+    h.mistral.reject(new TranscriberError("TIMEOUT", "timed out"));
+    h.google.reject(new TranscriberError("TIMEOUT", "timed out"));
+    await flush();
+
+    expect(h.typed).toEqual([]);
+    expect(h.calls).toEqual([]);
+    expect(h.notifications).toEqual(["Mistral transcription timed out"]);
   });
 });

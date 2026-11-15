@@ -111,6 +111,20 @@ describe("describeTiming", () => {
     expect(view.rows.map((r) => r.label)).toEqual(["audio ready", "queue wait", "Mistral", "summary", "typing"]);
   });
 
+  it("shows the wait for the other models and the merge after the models", () => {
+    const view = describeTiming(base({ mergeWaitMs: 400, mergeMs: 700 }));
+
+    expect(view.rows.map((r) => [r.label, r.value])).toEqual([
+      ["audio ready", "0.08 s"],
+      ["queue wait", "0.00 s"],
+      ["Mistral", "1.21 s"],
+      ["wait for other models", "0.40 s"],
+      ["merge", "0.70 s"],
+      ["typing", "2.55 s"],
+    ]);
+    expect(row(describeTiming(base({ mergeMs: 10000, mergeFailed: true })), "merge").note).toBe("failed");
+  });
+
   it("says when the summary failed", () => {
     const view = describeTiming(base({ summaryMs: 10000, summaryFailed: true }));
 
