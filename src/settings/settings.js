@@ -34,6 +34,12 @@ function fillKeySelect(select, keys, selected, { includeNone = false } = {}) {
   select.value = selected || "";
 }
 
+// "mistral/mistral-small-latest" is shown as "mistral-small-latest (Mistral)".
+function modelLabel(id) {
+  const match = id.match(/^(mistral|google)\/(.*)/);
+  return match ? `${match[2]} (${match[1] === "mistral" ? "Mistral" : "Google"})` : id;
+}
+
 function fillModelSelect(models, modelsError, saved) {
   const select = document.getElementById("summaryModel");
   const warn = document.getElementById("modelWarn");
@@ -46,9 +52,7 @@ function fillModelSelect(models, modelsError, saved) {
   for (const id of options) {
     const opt = document.createElement("option");
     opt.value = id;
-    // Display: strip prefix, add provider label
-    const match = id.match(/^(mistral|google)\/(.*)/);
-    opt.textContent = match ? `${match[2]} (${match[1] === "mistral" ? "Mistral" : "Google"})` : id;
+    opt.textContent = modelLabel(id);
     select.appendChild(opt);
   }
   select.value = saved;
@@ -125,6 +129,22 @@ function wireDictionaryButtons() {
   window.addEventListener("focus", () => refreshDictionaryInfo().catch(() => {}));
 }
 
+// The same chat models as for the summary, and "none". A saved model that is
+// not in the list stays selectable.
+function fillMergeSelect(models, saved) {
+  const select = document.getElementById("mergeModel");
+  select.replaceChildren();
+  const ids = Array.isArray(models) ? [...models] : [];
+  if (saved && !ids.includes(saved)) ids.unshift(saved);
+  for (const id of ["", ...ids]) {
+    const opt = document.createElement("option");
+    opt.value = id;
+    opt.textContent = id ? modelLabel(id) : "— none (no merge) —";
+    select.appendChild(opt);
+  }
+  select.value = saved;
+}
+
 // The primary model is one of the checked models, so the list follows the
 // checkboxes. A selection that gets unchecked falls back to "none".
 function fillPrimarySelect(selected) {
@@ -160,6 +180,7 @@ async function init() {
       includeNone: true,
     });
     fillModelSelect(models, modelsError, config.summaryModel);
+    fillMergeSelect(models, config.mergeModel);
 
     document.getElementById("language").value = config.language;
     document.getElementById("summaryPrompt").value = config.summaryPrompt;
@@ -204,6 +225,7 @@ async function init() {
               (box) => box.value
             ),
             primaryModel: document.getElementById("primaryModel").value,
+            mergeModel: document.getElementById("mergeModel").value,
             microsoftEndpoint: document.getElementById("microsoftEndpoint").value,
             microsoftDeployment: document.getElementById("microsoftDeployment").value,
             dictionaryPath: document.getElementById("dictionaryPath").value,
@@ -221,6 +243,7 @@ async function init() {
 
         if (result) {
           fillModelSelect(result.models, result.modelsError, payload.config.summaryModel);
+          fillMergeSelect(result.models, payload.config.mergeModel);
         }
         document.getElementById("apiKey").value = "";
         document.getElementById("googleApiKey").value = "";

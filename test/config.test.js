@@ -6,6 +6,12 @@ import * as cfg from "../src/shared/config.js";
 import { KEY_NAMES } from "../src/shared/keys.js";
 
 describe("config", () => {
+  it("has no merge model by default and keeps a chosen one", () => {
+    expect(cfg.mergeConfig({}).mergeModel).toBe("");
+    expect(cfg.mergeConfig({ mergeModel: " google/gemini-flash-lite " }).mergeModel).toBe("google/gemini-flash-lite");
+    expect(cfg.mergeConfig({ mergeModel: 5 }).mergeModel).toBe("");
+  });
+
   it("returns defaults when file is missing", () => {
     const c = cfg.loadConfig(path.join(os.tmpdir(), "vt-missing-xyz.json"));
     expect(c.recordKey).toBe("RIGHT ALT");

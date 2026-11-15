@@ -55,6 +55,10 @@
       <select id="primaryModel"></select>
       <div class="hint">With a primary model, its transcript is typed even if another checked model answers first. The primary gets 1.5 times the answer time of that other model; then the other transcript is typed. A primary that fails or hears nothing does not delay the other transcript.</div>
     </label>
+    <label>Merge model
+      <select id="mergeModel"></select>
+      <div class="hint">With two or more checked models, a fast chat model writes one text from their transcripts: it takes the most probable words, removes fillers such as "um" and "äh", and spells the words of your dictionary as listed. VoiceTyper waits for the other models up to 2 times the answer time of the first one. With only one transcript, or when the merge fails, a transcript is typed as usual.</div>
+    </label>
     <label>Language
       <select id="language">
         <option value="auto">Auto-detect</option>

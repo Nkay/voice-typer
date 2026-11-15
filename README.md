@@ -48,7 +48,8 @@ too short to count still types nothing.
 
 With more than one model checked, VoiceTyper asks all of them at the same time
 and types the first transcript that comes back (unless you set a
-[primary model](#primary-model)); later answers are dropped. A
+[primary model](#primary-model) or a [merge model](#merge-model)); later
+answers are dropped. A
 model that fails or hears nothing does not stop the others, so you never lose a
 dictation to a single provider outage. Only when every model fails does a
 notification name the first error.
@@ -79,6 +80,30 @@ hold, and with the non-streaming `MAI-Transcribe-2` model, which receives the
 recording after the release like the other providers. The non-streaming model
 uses the same key and resource, through the resource's Speech host
 (`<resource>.cognitiveservices.azure.com`).
+
+### Merge model
+
+With two or more models checked, a fast chat model can write one text from
+their transcripts. Select it as **Merge model** in Settings, for example a
+Gemini Flash-Lite or a small Mistral model. The merge model:
+
+- takes the words that make the most sense where the transcripts differ,
+- removes fillers such as "um", "uh", "äh" and "ähm", and stutters,
+- spells the terms of your [dictionary](#dictionary) as listed,
+- keeps everything else as you said it.
+
+VoiceTyper waits for the other models until 2 times the answer time of the
+first one: an answer after 1.0 s gives the others until 2.0 s. The realtime
+Microsoft transcript is ready at the release, so the clock starts with the
+first other answer. Then VoiceTyper merges the transcripts that arrived. The
+merge model gets at most 100 dictionary terms and 5 s to answer.
+
+When only one transcript arrived, or when the merge fails, a transcript is
+typed as without a merge model (the primary's, if it arrived). A merged text
+that is much longer than every transcript counts as failed: the model then
+answered the dictation instead of writing it down. The timing history shows the
+wait and the merge as their own steps, and a double press copies the merged
+text under `[Merged]`.
 
 ### Copy every transcript
 
@@ -148,6 +173,9 @@ each one how long every step took:
   fills in its row when it does.
 - **wait for primary** — how long a finished transcript of another model
   waited for the primary model (see [Primary model](#primary-model)).
+- **wait for other models** — how long the first transcript waited for the
+  other models before the merge (see [Merge model](#merge-model)).
+- **merge** — the merge request; the note says "failed" when it failed.
 - **summary** — the summary request, for a dictation with the summary command.
 - **typing** — the synthesized keystrokes, with the number of characters. This
   includes any time typing waited for you to let go of a modifier key. With
@@ -286,6 +314,9 @@ The same Settings window lets you configure:
 - **Primary model** — one of the checked models, or none. The transcript of the
   primary is preferred to a faster transcript of another model, within a time
   limit (see [Primary model](#primary-model)). Defaults to none.
+- **Merge model** — a chat model that writes one text from the transcripts of
+  the checked models, or none (see [Merge model](#merge-model)). The list is
+  the same as for the summary model. Defaults to none.
 - **Language** — `auto` (auto-detect), `de` (German), or `en` (English). Applies
   to whichever provider is in use.
 - **Dictionary file** — the [dictionary](#dictionary). **Choose…** selects an
@@ -332,6 +363,7 @@ Non-secret settings are stored as JSON at:
 That includes `transcriptionModels` (a list of `"mistral"`, `"google"` and
 `"microsoft"`; an older `transcriptionProvider` value is read once and
 converted), `primaryModel` (one of the checked models, or `""` for none),
+`mergeModel` (a provider-prefixed chat model, or `""` for none),
 `microsoftEndpoint`, `microsoftDeployment`, `dictionaryPath`, and the
 provider-prefixed `summaryModel`. The API keys are stored separately
 (encrypted, as `key.enc` for Mistral, `google-key.enc` for Google and
