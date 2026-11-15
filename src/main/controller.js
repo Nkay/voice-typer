@@ -1,5 +1,6 @@
 const { createTypingLanes } = require("./typingLanes.js");
 const { separatorText } = require("./typer.js");
+const { EMPTY: EMPTY_DICTIONARY, applyDictionary, liveCut } = require("../shared/dictionary.js");
 
 const PROVIDER_LABELS = { MicrosoftError: "Microsoft", GoogleError: "Google" };
 
@@ -24,6 +25,11 @@ class Controller {
     this.openMicrosoftStream = deps.openMicrosoftStream;
     this.microsoftTranscribe = deps.microsoftTranscribe;
     this.copyToClipboard = deps.copyToClipboard || null;
+    // { load() → Promise<dictionary>, current() → dictionary }; see dictionary.js.
+    this.dictionary = deps.dictionary || {
+      load: async () => EMPTY_DICTIONARY,
+      current: () => EMPTY_DICTIONARY,
+    };
     this.getConfig = deps.getConfig;
     this.notify = deps.notify;
     this.minDurationMs = deps.minDurationMs != null ? deps.minDurationMs : 200;
@@ -125,6 +131,8 @@ class Controller {
     // Here, not only when Microsoft is checked: a stale live lane blocks every
     // later dictation, whatever the models are now.
     this._dropStaleStreams();
+    // Read the dictionary file during the hold, so it is ready at release.
+    this.dictionary.load();
 
     const models = cfg.transcriptionModels || ["mistral"];
     const streams = models.includes("microsoft");
@@ -196,10 +204,15 @@ class Controller {
     if (rec.qualified) this._flushLive(rec);
   }
 
-  _flushLive(rec) {
+  // With dictionary corrections, the last words stay back until the final
+  // flush: the next delta can still complete a word or a phrase to correct.
+  _flushLive(rec, final = false) {
     if (!rec.lane || rec.pending.length === 0) return;
-    rec.lane.push(rec.pending);
-    rec.pending = "";
+    const dict = this.dictionary.current();
+    const cut = final ? rec.pending.length : liveCut(rec.pending, dict);
+    if (cut === 0) return;
+    rec.lane.push(applyDictionary(rec.pending.slice(0, cut), dict));
+    rec.pending = rec.pending.slice(cut);
     rec.typedAny = true;
   }
 
@@ -270,11 +283,12 @@ class Controller {
     try {
       transcript = await rec.session.finish();
     } catch (err) {
-      this._flushLive(rec);
+      this._flushLive(rec, true);
       await rec.lane.close();
       throw err;
     }
-    this._flushLive(rec);
+    this._flushLive(rec, true);
+    transcript = applyDictionary(transcript, this.dictionary.current());
     if (transcript) this.lastTranscripts.push({ label: "Microsoft", text: transcript });
     // The service streams the transcript as deltas; this only matters if it
     // ever sends the final transcript alone.
@@ -295,25 +309,34 @@ class Controller {
   // session's final transcript.
   async _race(bytes, mode, cfg, rec) {
     const models = cfg.transcriptionModels || ["mistral"];
+    const dict = await this.dictionary.load();
+    const hints = dict.hints;
     const transcripts = [];
     this.lastTranscripts = transcripts;
     const runs = [];
     const add = (label, run) =>
-      runs.push(run.then((t) => {
+      runs.push(run.then((raw) => {
+        const t = applyDictionary(raw, dict);
         if (t) transcripts.push({ label, text: t });
         return t;
       }));
     if (models.includes("mistral")) {
-      add("Mistral", this.transcribe(bytes, { apiKey: this.getApiKey(), model: cfg.model, language: cfg.language }));
+      add("Mistral", this.transcribe(bytes, {
+        apiKey: this.getApiKey(),
+        model: cfg.model,
+        language: cfg.language,
+        hints,
+      }));
     }
     if (models.includes("google")) {
-      add("Google", this.googleTranscribe(bytes, { apiKey: this.getGoogleApiKey(), language: cfg.language }));
+      add("Google", this.googleTranscribe(bytes, { apiKey: this.getGoogleApiKey(), language: cfg.language, hints }));
     }
     if (models.includes("microsoft")) {
       add("Microsoft", this.microsoftTranscribe(bytes, {
         apiKey: this.getMicrosoftApiKey(),
         endpoint: cfg.microsoftEndpoint,
         language: cfg.language,
+        hints,
       }));
     }
     if (rec) add("Microsoft (live)", rec.session.finish());

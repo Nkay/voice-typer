@@ -18,6 +18,8 @@ async function transcribe(wavBytes, opts = {}) {
     fetchImpl = fetch,
     timeoutMs = 30000,
     maxAttempts = 2,
+    // Dictionary terms, sent as custom_vocabulary.
+    hints = [],
   } = opts;
 
   if (!apiKey) throw new GoogleError("NO_API_KEY", "No Google API key configured");
@@ -25,23 +27,22 @@ async function transcribe(wavBytes, opts = {}) {
     throw new GoogleError("TOO_LARGE", "Recording too long for Google transcription");
   }
 
-  const transcriptionConfig = { mode: "smart" };
-  if (language && language !== "auto") {
-    transcriptionConfig.language_codes = [language];
-  }
+  const audio = Buffer.from(wavBytes).toString("base64");
+  const requestBody = (withHints) => {
+    const transcriptionConfig = { mode: "smart" };
+    if (language && language !== "auto") {
+      transcriptionConfig.language_codes = [language];
+    }
+    if (withHints) transcriptionConfig.custom_vocabulary = hints;
+    return JSON.stringify({
+      model,
+      input: [{ type: "audio", data: audio, mime_type: "audio/wav" }],
+      generation_config: { transcription_config: transcriptionConfig },
+    });
+  };
 
-  const body = JSON.stringify({
-    model,
-    input: [
-      {
-        type: "audio",
-        data: Buffer.from(wavBytes).toString("base64"),
-        mime_type: "audio/wav",
-      },
-    ],
-    generation_config: { transcription_config: transcriptionConfig },
-  });
-
+  let useHints = hints.length > 0;
+  let body = requestBody(useHints);
   let lastNetworkError;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     let res;
@@ -63,7 +64,19 @@ async function transcribe(wavBytes, opts = {}) {
       continue;
     }
 
-    if (!res.ok) throw errorForStatus(res.status, await res.json().catch(() => null));
+    if (!res.ok) {
+      const err = errorForStatus(res.status, await res.json().catch(() => null));
+      // A 400 that is not a bad key can be a rejected vocabulary. A transcript
+      // without hints is better than none.
+      if (res.status === 400 && useHints && err.code !== "UNAUTHORIZED") {
+        console.warn("VoiceTyper: Google rejected the dictionary hints; trying without them");
+        useHints = false;
+        body = requestBody(false);
+        attempt--;
+        continue;
+      }
+      throw err;
+    }
 
     let data;
     try {

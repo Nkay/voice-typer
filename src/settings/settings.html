@@ -16,6 +16,8 @@
       .warn { color: #b26500; font-size: 12px; margin-top: 4px; }
       .error { color: #c62828; }
       .hint { color: #666; font-size: 12px; margin-top: 4px; font-weight: 400; }
+      .buttons { display: flex; gap: 6px; margin-top: 6px; }
+      .buttons button { margin-top: 0; padding: 4px 10px; }
     </style>
   </head>
   <body>
@@ -56,6 +58,17 @@
         <option value="en">English</option>
       </select>
     </label>
+    <label>Dictionary file
+      <input id="dictionaryPath" type="text" readonly placeholder="no dictionary" />
+    </label>
+    <div class="buttons">
+      <button id="dictionaryChoose" type="button">Choose…</button>
+      <button id="dictionaryCreate" type="button">New…</button>
+      <button id="dictionaryOpen" type="button">Edit</button>
+      <button id="dictionaryRemove" type="button">Remove</button>
+    </div>
+    <div id="dictionaryInfo" class="hint"></div>
+    <div class="hint">Names and terms that the models often get wrong, one per line. Put the file in your OneDrive folder and select the same file on each PC. Changes apply at the next dictation.</div>
     <label>Record key
       <select id="recordKey"></select>
     </label>

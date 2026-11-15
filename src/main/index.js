@@ -8,6 +8,8 @@ const {
   ipcMain,
   Notification,
   clipboard,
+  dialog,
+  shell,
 } = require("electron");
 
 const { keyboard, Key } = require("@nut-tree-fork/nut-js");
@@ -36,6 +38,8 @@ boot({
   },
   isModifierDown: () => getKeyState !== null && modifierProbe(),
   clipboard,
+  dialog,
+  shell,
   keyboard,
   Key,
 });

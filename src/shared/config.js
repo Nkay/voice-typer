@@ -27,6 +27,9 @@ const DEFAULTS = {
   // Not a secret; the key lives in secrets like the other providers' keys.
   microsoftEndpoint: "",
   microsoftDeployment: "MAI-Transcribe-2-Streaming",
+  // A plain text file of names and terms, for example in a OneDrive folder so
+  // that every PC uses the same list. "" means no dictionary.
+  dictionaryPath: "",
 };
 
 const LANGUAGES = ["auto", "de", "en"];
@@ -109,6 +112,7 @@ function validateConfig(config) {
   if (c.transcriptionModels.length === 0) c.transcriptionModels = [...DEFAULTS.transcriptionModels];
   c.microsoftEndpoint = normalizeEndpoint(c.microsoftEndpoint);
   c.microsoftDeployment = nonEmptyString(c.microsoftDeployment, DEFAULTS.microsoftDeployment);
+  c.dictionaryPath = nonEmptyString(c.dictionaryPath, "");
   return c;
 }
 

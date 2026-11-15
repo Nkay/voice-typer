@@ -92,6 +92,40 @@ error) and gives you a menu to pause/resume, open Settings, or quit.
 > the character count. Avoid typing yourself into the focused field until the
 > tray icon leaves the "processing" state.
 
+### Dictionary
+
+Names that the models do not know — your company, your projects, your
+colleagues — often come out wrong. A dictionary file lists them. It is a plain
+text file that you can put in your OneDrive folder, so every PC that selects the
+same file uses the same list:
+
+```text
+# Lines that start with # are comments.
+VoiceTyper
+WebStorm
+Voice Typer, Voicetyper => VoiceTyper
+```
+
+- A line with a term gives the term to the models as a hint and corrects its
+  case in the transcript (`webstorm` becomes `WebStorm`).
+- A line `wrong => right` also replaces each wrong form. Separate several wrong
+  forms with commas.
+- Corrections apply to whole words and phrases only, without regard to case:
+  `VoiceTypers` stays as it is.
+
+The hints go to Mistral as `context_bias`, to Google as `custom_vocabulary` and
+to the non-streaming Microsoft model as a phrase list, at most 100 terms. The
+Microsoft live session gets no hints, because its API documents no such
+setting; the corrections apply to its text all the same. When a provider
+rejects the hints, VoiceTyper asks it again without them. With live typing, the
+last word (or, for a correction of several words, the last few words) is typed
+when the next words arrive, so that a correction can still apply.
+
+VoiceTyper reads the file again at each dictation when it changed, so an edit
+applies at the next dictation without a restart. When the file cannot be read
+(for example, OneDrive is offline and the file is not on this PC), VoiceTyper
+uses the last copy it read and shows a notification.
+
 ### Protection against stray shortcuts
 
 Windows combines every synthesized character with the modifier keys that are
@@ -200,6 +234,11 @@ The same Settings window lets you configure:
 - **Separator** — what goes between the transcript and the summary: a blank
   line (typed as Shift+Enter twice, so it never submits a chat field), an em
   dash, or two spaces.
+- **Dictionary file** — the [dictionary](#dictionary). **Choose…** selects an
+  existing file, **New…** creates one from a template (in your OneDrive folder
+  by default) and opens it, **Edit** opens the file in your text editor, and
+  **Remove** stops the use of a dictionary. The line under the buttons shows
+  the number of terms and corrections. Click **Save** to use a new selection.
 - **Microphone** — which input device to record from (defaults to the system
   default device).
 - **Launch on login** — whether Windows should start VoiceTyper automatically
@@ -220,8 +259,8 @@ Non-secret settings are stored as JSON at:
 
 That includes `transcriptionModels` (a list of `"mistral"`, `"google"` and
 `"microsoft"`; an older `transcriptionProvider` value is read once and
-converted), `microsoftEndpoint`, `microsoftDeployment`, and the
-provider-prefixed `summaryModel`. The API keys are stored separately
+converted), `microsoftEndpoint`, `microsoftDeployment`, `dictionaryPath`, and
+the provider-prefixed `summaryModel`. The API keys are stored separately
 (encrypted, as `key.enc` for Mistral, `google-key.enc` for Google and
 `microsoft-key.enc` for Microsoft) in the same directory and are not part of
 this file.

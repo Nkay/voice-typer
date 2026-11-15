@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import EventEmitter from "events";
 import { Controller } from "../src/main/controller.js";
+import { parseDictionary } from "../src/shared/dictionary.js";
 import { TranscriberError } from "../src/shared/transcriber.js";
 import { GoogleError } from "../src/shared/google.js";
 
@@ -49,6 +50,7 @@ function harness(overrides = {}) {
       })),
     notify: (t, b) => notifications.push([t, b]),
     copyToClipboard: overrides.copyToClipboard || ((t) => clipboard.push(t)),
+    dictionary: overrides.dictionary,
     minDurationMs: 200,
     minHoldMs: 1000,
     now: () => nowMs,
@@ -791,5 +793,49 @@ describe("Controller double press", () => {
     await dictate(h);
     expect(h.clipboard).toEqual([]);
     expect(h.typed).toEqual(["text"]);
+  });
+});
+
+describe("Controller with a dictionary", () => {
+  const dictionaryOf = (text) => {
+    const dict = parseDictionary(text);
+    return { load: async () => dict, current: () => dict, loads: 0 };
+  };
+
+  it("gives the hints to every batch model and corrects the typed and copied text", async () => {
+    const calls = [];
+    const h = harness({
+      getConfig: raceConfig,
+      dictionary: dictionaryOf("chax\nTschax => chax"),
+      transcribe: async (_b, opts) => {
+        calls.push(["mistral", opts.hints]);
+        return "Hallo Tschax";
+      },
+      googleTranscribe: async (_b, opts) => {
+        calls.push(["google", opts.hints]);
+        return new Promise(() => {});
+      },
+    });
+    h.controller.start();
+    h.hotkey.emit("record-start");
+    h.advance(1200);
+    h.hotkey.emit("record-stop");
+    h.fireWav(wavOfMs(1000));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(calls).toEqual([
+      ["mistral", ["chax"]],
+      ["google", ["chax"]],
+    ]);
+    expect(h.typed).toEqual(["Hallo chax"]);
+    expect(h.controller.lastTranscripts).toEqual([{ label: "Mistral", text: "Hallo chax" }]);
+  });
+
+  it("starts to read the dictionary at key-down", () => {
+    let loads = 0;
+    const dict = parseDictionary("");
+    const h = harness({ dictionary: { load: async () => (loads++, dict), current: () => dict } });
+    h.controller.start();
+    h.hotkey.emit("record-start");
+    expect(loads).toBe(1);
   });
 });

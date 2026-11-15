@@ -66,6 +66,60 @@ function fillModelSelect(models, modelsError, saved) {
   }
 }
 
+let savedDictionaryPath = "";
+
+function plural(count, word) {
+  return `${count} ${word}${count === 1 ? "" : "s"}`;
+}
+
+function showDictionary(filePath, info) {
+  document.getElementById("dictionaryPath").value = filePath;
+  document.getElementById("dictionaryOpen").disabled = !filePath;
+  document.getElementById("dictionaryRemove").disabled = !filePath;
+  const line = document.getElementById("dictionaryInfo");
+  let text = "";
+  if (filePath && info && info.ok) {
+    text = `${plural(info.terms, "term")}, ${plural(info.corrections, "correction")}`;
+  } else if (filePath && info) {
+    text = info.error;
+  }
+  if (filePath !== savedDictionaryPath) text += `${text ? " — " : ""}click Save to use this file`;
+  line.textContent = text;
+  line.classList.toggle("error", Boolean(info && !info.ok));
+}
+
+async function refreshDictionaryInfo() {
+  const filePath = document.getElementById("dictionaryPath").value;
+  showDictionary(filePath, filePath ? await window.settingsAPI.describeDictionary(filePath) : null);
+}
+
+function wireDictionaryButtons() {
+  const pick = async (call) => {
+    const result = await call();
+    if (!result) return;
+    if (result.error) {
+      setStatus(result.error, true);
+      return;
+    }
+    showDictionary(result.path, result.info);
+  };
+  document.getElementById("dictionaryChoose").addEventListener("click", () =>
+    pick(window.settingsAPI.chooseDictionary)
+  );
+  document.getElementById("dictionaryCreate").addEventListener("click", async () => {
+    await pick(window.settingsAPI.createDictionary);
+    const filePath = document.getElementById("dictionaryPath").value;
+    if (filePath) await window.settingsAPI.openDictionary(filePath);
+  });
+  document.getElementById("dictionaryOpen").addEventListener("click", async () => {
+    const error = await window.settingsAPI.openDictionary(document.getElementById("dictionaryPath").value);
+    if (error) setStatus(error, true);
+  });
+  document.getElementById("dictionaryRemove").addEventListener("click", () => showDictionary("", null));
+  // The file is edited in another app; show the new counts when the user comes back.
+  window.addEventListener("focus", () => refreshDictionaryInfo().catch(() => {}));
+}
+
 function setStatus(text, isError) {
   const status = document.getElementById("status");
   status.textContent = text;
@@ -101,6 +155,10 @@ async function init() {
       : "enter your Microsoft Foundry API key";
     document.getElementById("microsoftEndpoint").value = config.microsoftEndpoint || "";
     document.getElementById("microsoftDeployment").value = config.microsoftDeployment || "";
+    savedDictionaryPath = config.dictionaryPath || "";
+    document.getElementById("dictionaryPath").value = savedDictionaryPath;
+    wireDictionaryButtons();
+    await refreshDictionaryInfo();
     await loadMics(config.micDeviceId);
 
     document.getElementById("save").addEventListener("click", async () => {
@@ -121,6 +179,7 @@ async function init() {
             ),
             microsoftEndpoint: document.getElementById("microsoftEndpoint").value,
             microsoftDeployment: document.getElementById("microsoftDeployment").value,
+            dictionaryPath: document.getElementById("dictionaryPath").value,
           },
           apiKey: document.getElementById("apiKey").value,
           googleApiKey: document.getElementById("googleApiKey").value,
@@ -139,6 +198,8 @@ async function init() {
         document.getElementById("apiKey").value = "";
         document.getElementById("googleApiKey").value = "";
         document.getElementById("microsoftApiKey").value = "";
+        savedDictionaryPath = payload.config.dictionaryPath;
+        await refreshDictionaryInfo();
         setStatus("Saved", false);
         setTimeout(() => setStatus("", false), 2000);
       } catch (err) {

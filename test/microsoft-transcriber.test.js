@@ -62,3 +62,27 @@ describe("Microsoft transcribe", () => {
     ).rejects.toMatchObject({ code: "NETWORK" });
   });
 });
+
+describe("Microsoft transcribe with dictionary hints", () => {
+  const definitionOf = (init) => JSON.parse(init.body.get("definition"));
+
+  it("sends the hints as a phrase list", async () => {
+    let init;
+    const fetchImpl = async (_url, i) => {
+      init = i;
+      return jsonResponse(200, { combinedPhrases: [{ text: "ok" }] });
+    };
+    await transcribe(wav, { apiKey: "k", endpoint, fetchImpl, hints: ["chax"] });
+    expect(definitionOf(init).phraseList).toEqual({ phrases: ["chax"] });
+  });
+
+  it("tries once more without the phrase list after a 400", async () => {
+    const inits = [];
+    const fetchImpl = async (_url, i) => {
+      inits.push(i);
+      return inits.length === 1 ? jsonResponse(400, {}) : jsonResponse(200, { combinedPhrases: [{ text: "ok" }] });
+    };
+    expect(await transcribe(wav, { apiKey: "k", endpoint, fetchImpl, hints: ["chax"] })).toBe("ok");
+    expect(definitionOf(inits[1])).not.toHaveProperty("phraseList");
+  });
+});

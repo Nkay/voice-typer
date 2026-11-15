@@ -1,3 +1,4 @@
+const fs = require("fs");
 const path = require("path");
 
 const configModule = require("../shared/config.js");
@@ -18,6 +19,12 @@ const { openStream: defaultOpenMicrosoftStream } = require("../shared/microsoft-
 const { transcribe: microsoftTranscribe } = require("../shared/microsoft-transcriber.js");
 const { normalizeEndpoint } = require("../shared/microsoft.js");
 const { KEYS } = require("../shared/keys.js");
+const { TEMPLATE, createDictionaryStore, describeDictionaryFile } = require("../shared/dictionary.js");
+
+const DICTIONARY_FILTERS = [
+  { name: "Text files", extensions: ["txt"] },
+  { name: "All files", extensions: ["*"] },
+];
 
 // All Electron and native-module surfaces are injected so the wiring can be
 // exercised in tests without an Electron runtime.
@@ -39,6 +46,9 @@ function boot({
   // True while Shift, Ctrl, Alt/AltGr or Win is physically down; typing waits.
   isModifierDown = () => false,
   clipboard = null,
+  dialog = null,
+  shell = null,
+  env = process.env,
 }) {
   // Slow the synthetic typing slightly so target apps keep up.
   keyboard.config.autoDelayMs = 2;
@@ -207,6 +217,11 @@ function boot({
       isPaused: () => (state.controller ? state.controller.isPaused() : false),
     });
 
+    const dictionary = createDictionaryStore({
+      getPath: () => state.config.dictionaryPath,
+      onError: (message) => notify("VoiceTyper", message),
+    });
+
     state.controller = new Controller({
       hotkey: state.hotkey,
       recorder,
@@ -222,6 +237,7 @@ function boot({
       openMicrosoftStream,
       microsoftTranscribe,
       copyToClipboard: clipboard ? (text) => clipboard.writeText(text) : null,
+      dictionary,
       getConfig: () => state.config,
       notify,
       minDurationMs: 200,
@@ -291,6 +307,9 @@ function boot({
       if (candidate.summaryModel.startsWith("google/") && !willHaveGoogleKey) {
         return { ok: false, error: "Google API key is required for this summary model." };
       }
+      if (candidate.dictionaryPath && !isAllowedDictionary(candidate.dictionaryPath)) {
+        return { ok: false, error: "Select the dictionary file with Choose… or New…." };
+      }
 
       state.config = candidate;
       configModule.saveConfig(configPath, state.config);
@@ -313,6 +332,61 @@ function boot({
       }
 
       return { ok: true, models: state.models, modelsError: state.modelsError };
+    });
+
+    // --- Dictionary file IPC ---
+    // The Settings window can only open or describe a file that the user
+    // selected in a dialog of this session or that the config already names.
+    const allowedDictionaryPaths = new Set();
+    const isAllowedDictionary = (p) =>
+      typeof p === "string" && p.length > 0 && (p === state.config.dictionaryPath || allowedDictionaryPaths.has(p));
+    // A synced folder first, so every PC with the same OneDrive finds the file.
+    const dictionaryDir = () => {
+      if (state.config.dictionaryPath) return path.dirname(state.config.dictionaryPath);
+      return env.OneDriveCommercial || env.OneDrive || app.getPath("documents");
+    };
+    const chosen = async (filePath) => {
+      allowedDictionaryPaths.add(filePath);
+      return { path: filePath, info: await describeDictionaryFile(filePath) };
+    };
+
+    ipcMain.handle("dictionary:choose", async () => {
+      if (!dialog) return null;
+      const result = await dialog.showOpenDialog(state.settingsWin, {
+        title: "Select the dictionary file",
+        defaultPath: dictionaryDir(),
+        properties: ["openFile"],
+        filters: DICTIONARY_FILTERS,
+      });
+      if (result.canceled || result.filePaths.length === 0) return null;
+      return chosen(result.filePaths[0]);
+    });
+
+    ipcMain.handle("dictionary:create", async () => {
+      if (!dialog) return null;
+      const result = await dialog.showSaveDialog(state.settingsWin, {
+        title: "Create a dictionary file",
+        defaultPath: path.join(dictionaryDir(), "VoiceTyper dictionary.txt"),
+        filters: DICTIONARY_FILTERS,
+      });
+      if (result.canceled || !result.filePath) return null;
+      try {
+        // "wx": an existing file is used as it is, never overwritten.
+        fs.writeFileSync(result.filePath, TEMPLATE, { encoding: "utf8", flag: "wx" });
+      } catch (err) {
+        if (err.code !== "EEXIST") return { error: `Could not create the file: ${err.message}` };
+      }
+      return chosen(result.filePath);
+    });
+
+    ipcMain.handle("dictionary:open", async (_e, filePath) => {
+      if (!shell || !isAllowedDictionary(filePath)) return "This file cannot be opened.";
+      return shell.openPath(filePath);
+    });
+
+    ipcMain.handle("dictionary:describe", async (_e, filePath) => {
+      if (!isAllowedDictionary(filePath)) return null;
+      return describeDictionaryFile(filePath);
     });
   });
 
