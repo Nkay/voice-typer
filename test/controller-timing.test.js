@@ -112,7 +112,7 @@ describe("Controller timing history", () => {
         recordMs: 3000,
         audioMs: 80,
         queueMs: 0,
-        models: [{ label: "Mistral", ms: 1200, status: "ok", typed: true }],
+        models: [{ label: "Mistral", ms: 1200, status: "ok", typed: true, text: "hello" }],
         primaryWaitMs: null,
         mergeWaitMs: null,
         mergeMs: null,
@@ -122,6 +122,10 @@ describe("Controller timing history", () => {
         typingMs: 500,
         chars: 5,
         totalMs: 1780,
+        text: "hello",
+        mergeText: null,
+        summaryText: null,
+        recording: null,
       },
     ]);
   });
@@ -137,7 +141,7 @@ describe("Controller timing history", () => {
     await flush();
 
     expect(h.history.list()[0].models).toEqual([
-      { label: "Mistral", ms: 1200, status: "ok", typed: true },
+      { label: "Mistral", ms: 1200, status: "ok", typed: true, text: "hello" },
       { label: "Google", ms: null, status: "pending", typed: false },
     ]);
 
@@ -146,7 +150,13 @@ describe("Controller timing history", () => {
     google.resolve("slower text");
     await flush();
 
-    expect(h.history.list()[0].models[1]).toEqual({ label: "Google", ms: 2000, status: "ok", typed: false });
+    expect(h.history.list()[0].models[1]).toEqual({
+      label: "Google",
+      ms: 2000,
+      status: "ok",
+      typed: false,
+      text: "slower text",
+    });
   });
 
   it("records a model that heard nothing", async () => {
@@ -259,7 +269,7 @@ describe("Controller timing history", () => {
         recordMs: 3000,
         audioMs: 80,
         queueMs: 0,
-        models: [{ label: "Microsoft (live)", ms: 300, status: "ok", typed: true }],
+        models: [{ label: "Microsoft (live)", ms: 300, status: "ok", typed: true, text: "live text" }],
         primaryWaitMs: null,
         mergeWaitMs: null,
         mergeMs: null,
@@ -269,6 +279,10 @@ describe("Controller timing history", () => {
         typingMs: 40,
         chars: 9,
         totalMs: 420,
+        text: "live text",
+        mergeText: null,
+        summaryText: null,
+        recording: null,
       },
     ]);
   });

@@ -129,3 +129,51 @@ describe("summarize", () => {
     ).rejects.toMatchObject({ code: "BAD_RESPONSE" });
   });
 });
+
+// A streamed answer, as server-sent events; split into chunks at "|".
+function streamResponse(text) {
+  const encoder = new TextEncoder();
+  const chunks = text.split("|");
+  return new Response(
+    new ReadableStream({
+      start(controller) {
+        for (const chunk of chunks) controller.enqueue(encoder.encode(chunk));
+        controller.close();
+      },
+    }),
+    { status: 200 }
+  );
+}
+
+describe("summarize with streaming", () => {
+  const delta = (content) => `data: ${JSON.stringify({ choices: [{ delta: { content } }] })}\n\n`;
+
+  it("asks for a stream and passes each piece to onDelta, also across chunk borders", async () => {
+    let body;
+    const pieces = [];
+    const sse = delta(" Hello") + delta("world ").replace("world", "wor|ld") + "data: [DONE]\n\n";
+    const fetchImpl = async (_url, init) => {
+      body = JSON.parse(init.body);
+      return streamResponse(sse);
+    };
+    const text = await summarize("t", { apiKey: "k", fetchImpl, onDelta: (d) => pieces.push(d) });
+    expect(body.stream).toBe(true);
+    expect(pieces).toEqual([" Hello", "world "]);
+    expect(text).toBe("Helloworld");
+  });
+
+  it("throws the status error of a refused stream", async () => {
+    const fetchImpl = async () => new Response("{}", { status: 401 });
+    await expect(summarize("t", { apiKey: "k", fetchImpl, onDelta: () => {} })).rejects.toMatchObject({
+      code: "UNAUTHORIZED",
+    });
+  });
+
+  it("throws a network error when the stream stays silent longer than the timeout", async () => {
+    const fetchImpl = (_url, init) =>
+      new Promise((_resolve, reject) => init.signal.addEventListener("abort", () => reject(new Error("aborted"))));
+    await expect(summarize("t", { apiKey: "k", fetchImpl, timeoutMs: 10, onDelta: () => {} })).rejects.toMatchObject({
+      code: "NETWORK",
+    });
+  });
+});

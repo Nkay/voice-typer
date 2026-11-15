@@ -140,3 +140,17 @@ describe("timing history", () => {
     expect(models.map((m) => m.status)).toEqual(["unfinished", "ok"]);
   });
 });
+
+describe("timing history onChange", () => {
+  it("passes the new or changed entry, and nothing after clear", () => {
+    const seen = [];
+    const history = createTimingHistory({ filePath: tmpFile(), onChange: (e) => seen.push(e && e.at) });
+    const first = entry(1);
+    history.add(first);
+    history.update(first);
+    history.update(entry(9));
+    history.clear();
+
+    expect(seen).toEqual([1, 1, undefined]);
+  });
+});

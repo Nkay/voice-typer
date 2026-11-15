@@ -111,6 +111,28 @@ describe("describeTiming", () => {
     expect(view.rows.map((r) => r.label)).toEqual(["audio ready", "queue wait", "Mistral", "summary", "typing"]);
   });
 
+  it("gives each model, the merge and the typing their text, and the recording", () => {
+    const view = describeTiming(
+      base({
+        models: [{ label: "Mistral", ms: 1210, status: "ok", typed: true, text: "äh thank you" }],
+        mergeMs: 700,
+        mergeText: "Thank you.",
+        text: "Thank you.",
+        recording: "2026-11-15_16-05-19-007",
+      })
+    );
+
+    expect(view.rows.map((r) => [r.label, r.text])).toEqual([
+      ["audio ready", ""],
+      ["queue wait", ""],
+      ["Mistral", "äh thank you"],
+      ["merge", "Thank you."],
+      ["typing", "Thank you."],
+    ]);
+    expect(view.recording).toBe("2026-11-15_16-05-19-007");
+    expect(describeTiming(base()).recording).toBeNull();
+  });
+
   it("shows the wait for the other models and the merge after the models", () => {
     const view = describeTiming(base({ mergeWaitMs: 400, mergeMs: 700 }));
 

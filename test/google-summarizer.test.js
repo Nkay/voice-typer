@@ -114,3 +114,43 @@ describe("google summarize", () => {
     expect(body.generationConfig.temperature).toBe(0.2);
   });
 });
+
+describe("google summarize thinking and streaming", () => {
+  const thinkingOf = async (model) => {
+    let body;
+    const fetchImpl = async (_url, init) => {
+      body = JSON.parse(init.body);
+      return okResponse("ok");
+    };
+    await summarize("t", { apiKey: "k", model, fetchImpl });
+    return body.generationConfig.thinkingConfig;
+  };
+
+  it("asks Gemini 3 and later for low thinking, but not Flash-Lite or older models", async () => {
+    expect(await thinkingOf("gemini-4-carbon")).toEqual({ thinkingLevel: "low" });
+    expect(await thinkingOf("gemini-3.7-flash")).toEqual({ thinkingLevel: "low" });
+    expect(await thinkingOf("gemini-3.5-flash-lite")).toBeUndefined();
+    expect(await thinkingOf("gemini-2.5-flash")).toBeUndefined();
+  });
+
+  it("leaves out thought parts and joins the other parts of a whole answer", async () => {
+    const fetchImpl = async () =>
+      jsonResponse(200, { candidates: [{ content: { parts: [{ text: "plan", thought: true }, { text: "Hal" }, { text: "lo" }] } }] });
+    expect(await summarize("t", { apiKey: "k", fetchImpl })).toBe("Hallo");
+  });
+
+  it("streams from streamGenerateContent and leaves out thought parts", async () => {
+    let url;
+    const pieces = [];
+    const event = (parts) => `data: ${JSON.stringify({ candidates: [{ content: { parts } }] })}\r\n\r\n`;
+    const sse = event([{ text: "plan", thought: true }]) + event([{ text: "Hallo " }]) + event([{ text: "Welt" }]);
+    const fetchImpl = async (u) => {
+      url = u;
+      return new Response(sse, { status: 200 });
+    };
+    const text = await summarize("t", { apiKey: "k", model: "gemini-4-carbon", fetchImpl, onDelta: (d) => pieces.push(d) });
+    expect(url).toContain("/models/gemini-4-carbon:streamGenerateContent?alt=sse&key=k");
+    expect(pieces).toEqual(["Hallo ", "Welt"]);
+    expect(text).toBe("Hallo Welt");
+  });
+});

@@ -732,4 +732,30 @@ describe("timing history window", () => {
 
     expect(captured.sent.filter(([channel]) => channel === "history:changed")).toEqual([]);
   });
+
+  it("gives the window the audio of a recording, and nothing for another file", async () => {
+    const { deps, captured } = fakeDeps();
+    boot(deps);
+    captured.readyCb();
+    const dir = path.join(captured.userDataDir, "recordings");
+    fs.mkdirSync(dir);
+    fs.writeFileSync(path.join(dir, "2026-11-15_16-05-19-007.wav"), "RIFF");
+
+    expect((await captured.handlers["history:audio"]({}, "2026-11-15_16-05-19-007")).toString()).toBe("RIFF");
+    expect(await captured.handlers["history:audio"]({}, "../config")).toBeNull();
+  });
+
+  it("creates and opens the recordings folder", async () => {
+    const { deps, captured } = fakeDeps();
+    const opened = [];
+    deps.shell = { openPath: async (p) => (opened.push(p), "") };
+    boot(deps);
+    captured.readyCb();
+
+    await captured.handlers["history:open-folder"]();
+
+    const dir = path.join(captured.userDataDir, "recordings");
+    expect(opened).toEqual([dir]);
+    expect(fs.existsSync(dir)).toBe(true);
+  });
 });

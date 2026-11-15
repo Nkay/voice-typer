@@ -17,18 +17,27 @@
       td.value { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; width: 70px; }
       td.note { color: #666; }
       tr.slowest td { font-weight: 600; color: #b26500; }
+      td.text { color: #222; font-size: 12px; padding: 0 0 6px 12px; white-space: pre-wrap; }
+      .entry button { margin: 0 0 6px; padding: 2px 10px; }
+      #player { width: 100%; margin-top: 8px; }
+      .buttons { display: flex; gap: 6px; }
       #empty { color: #666; margin-top: 24px; }
     </style>
   </head>
   <body>
     <header>
       <h1>Timing history</h1>
-      <button id="clear">Clear</button>
+      <div class="buttons">
+        <button id="folder">Recordings folder</button>
+        <button id="clear">Clear</button>
+      </div>
     </header>
     <p class="hint">
-      Newest dictation first. Each row is the duration of one step. The slowest step on the way to the
-      typed text is highlighted. The history holds times and character counts only, not the text.
+      Newest dictation first. Each row is the duration of one step, with the text that the step gave. The
+      slowest step on the way to the typed text is highlighted. Play a dictation to hear what was recorded.
+      The recordings folder keeps the audio and the texts of the last 500 dictations; Clear does not delete them.
     </p>
+    <audio id="player" controls hidden></audio>
     <p id="empty" hidden>No dictation yet.</p>
     <div id="list"></div>
     <script src="history.js"></script>
