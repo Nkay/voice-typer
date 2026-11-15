@@ -20,6 +20,7 @@ const { transcribe: microsoftTranscribe } = require("../shared/microsoft-transcr
 const { normalizeEndpoint } = require("../shared/microsoft.js");
 const { KEYS } = require("../shared/keys.js");
 const { createTimingHistory } = require("./timingHistory.js");
+const { createRecordings } = require("./recordings.js");
 const { describeTiming } = require("../shared/timing-format.js");
 const { TEMPLATE, createDictionaryStore, describeDictionaryFile } = require("../shared/dictionary.js");
 
@@ -178,8 +179,10 @@ function boot({
       state.modelsPromise = refreshModels();
     }
 
+    state.recordings = createRecordings({ dir: path.join(userData, "recordings") });
     state.history = createTimingHistory({
       filePath: path.join(userData, "timings.json"),
+      onEntry: (entry) => state.recordings.writeEntry(entry),
       // An open history window follows each dictation as it happens.
       onChange: () => {
         if (state.historyWin && !state.historyWin.isDestroyed()) {
@@ -262,6 +265,7 @@ function boot({
       copyToClipboard: clipboard ? (text) => clipboard.writeText(text) : null,
       dictionary,
       history: state.history,
+      recordings: state.recordings,
       getConfig: () => state.config,
       notify,
       minDurationMs: 200,
@@ -277,6 +281,11 @@ function boot({
     // --- Timing history IPC ---
     ipcMain.handle("history:get", async () => historyRows());
     ipcMain.handle("history:clear", async () => state.history.clear());
+    ipcMain.handle("history:audio", async (_e, name) => state.recordings.read(name));
+    ipcMain.handle("history:open-folder", async () => {
+      fs.mkdirSync(state.recordings.dir, { recursive: true });
+      return shell ? shell.openPath(state.recordings.dir) : "";
+    });
 
     // --- Settings IPC ---
     ipcMain.handle("settings:get", async () => {

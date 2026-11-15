@@ -98,10 +98,10 @@ function harness(overrides = {}) {
   controller.start();
 
   // Hold, release and deliver the audio. The requests start right after it.
-  const dictate = async () => {
+  const dictate = async (mode = "transcript") => {
     hotkey.emit("record-start");
     advance(3000);
-    hotkey.emit("record-stop", { mode: "transcript" });
+    hotkey.emit("record-stop", { mode });
     wavCb(wavOfMs(3000), recorder.starts.at(-1).id);
     await flush();
   };
@@ -120,6 +120,20 @@ describe("Controller primary model", () => {
 
     expect(h.typed).toEqual(["primary text"]);
     expect(h.waits).toEqual([]);
+  });
+
+  it("saves the audio of the dictation and keeps its name and the texts in the history entry", async () => {
+    const saved = [];
+    const h = harness({ deps: { recordings: { save: (bytes, at) => (saved.push([bytes.length, at]), "rec-1") } } });
+    await h.dictate();
+    h.mistral.resolve("primary text");
+    await flush();
+
+    expect(saved).toEqual([[44 + 3 * 16000 * 2, 3000]]);
+    const [entry] = h.history.list();
+    expect(entry.recording).toBe("rec-1");
+    expect(entry.text).toBe("primary text");
+    expect(entry.models[0].text).toBe("primary text");
   });
 
   it("waits for the primary until 1.5 times the answer time of the secondary", async () => {
@@ -294,7 +308,7 @@ describe("Controller primary model", () => {
     expect(entry.primaryWaitMs).toBe(500);
     expect(entry.models).toEqual([
       { label: "Mistral", ms: null, status: "pending", typed: false, primary: true },
-      { label: "Google", ms: 1000, status: "ok", typed: true },
+      { label: "Google", ms: 1000, status: "ok", typed: true, text: "secondary text" },
     ]);
   });
 
@@ -313,9 +327,12 @@ describe("Controller merge model", () => {
   // Google chat model; each call is recorded and answered by `answer`.
   function mergeHarness({ config = {}, answer = async () => "merged text", dictionary } = {}) {
     const calls = [];
+    // The answer streams in word by word, as the real chat clients do it.
     const chat = async (text, opts) => {
       calls.push({ text, opts });
-      return answer(text, opts);
+      const result = await answer(text, opts);
+      if (opts.onDelta) for (const piece of result.split(/(?<= )/)) opts.onDelta(piece);
+      return result.trim();
     };
     const deps = { googleSummarize: chat, summarize: chat };
     if (dictionary) deps.dictionary = { load: async () => dictionary, current: () => dictionary };
@@ -333,7 +350,7 @@ describe("Controller merge model", () => {
     h.mistral.resolve("mistral text");
     await flush();
 
-    expect(h.typed).toEqual(["merged text"]);
+    expect(h.typed.join("")).toBe("merged text");
     expect(h.calls).toHaveLength(1);
     expect(h.calls[0].opts).toMatchObject({
       apiKey: "google-key",
@@ -368,7 +385,7 @@ describe("Controller merge model", () => {
     h.waits[0].end();
     await flush();
     expect(h.calls[0].text).toContain('<transcript model="Microsoft (live)">\nlive text\n</transcript>');
-    expect(h.typed).toEqual(["merged text"]);
+    expect(h.typed.join("")).toBe("merged text");
   });
 
   it("uses a Mistral merge model with the Mistral key", async () => {
@@ -379,10 +396,10 @@ describe("Controller merge model", () => {
     await flush();
 
     expect(h.calls[0].opts).toMatchObject({ apiKey: "key", model: "mistral-small-latest" });
-    expect(h.typed).toEqual(["merged text"]);
+    expect(h.typed.join("")).toBe("merged text");
   });
 
-  it("types the first text when the merge answer is much longer than every transcript", async () => {
+  it("stops typing when the merge answer gets much longer than every transcript", async () => {
     const h = mergeHarness({ answer: async () => "Sure! Here is a long answer to your question. ".repeat(5) });
     await h.dictate();
     h.google.resolve("google text");
@@ -390,9 +407,59 @@ describe("Controller merge model", () => {
     h.mistral.resolve("mistral text");
     await flush();
 
-    expect(h.typed).toEqual(["google text"]);
-    expect(h.notifications).toEqual(["Merge failed — typed one transcript"]);
-    expect(h.controller.lastTranscripts.map((t) => t.label)).toEqual(["Google", "Mistral"]);
+    // The limit is 2 × 12 + 20 = 44 characters.
+    expect(h.typed.join("")).toBe("Sure! Here is a long answer to your");
+    expect(h.notifications).toEqual(["The merge model wrote too much — typing stopped"]);
+    expect(h.history.list()[0].mergeFailed).toBe(true);
+  });
+
+  it("types the merged text while it streams in", async () => {
+    let finish;
+    const h = mergeHarness({
+      answer: async (_text, opts) => {
+        opts.onDelta("Hello ");
+        opts.onDelta("big ");
+        await new Promise((r) => (finish = r));
+        return "world";
+      },
+    });
+    await h.dictate();
+    h.google.resolve("google text");
+    h.mistral.resolve("mistral text");
+    await flush();
+
+    // The space at the end waits for the next piece.
+    expect(h.typed.join("")).toBe("Hello big");
+    finish();
+    await flush();
+    expect(h.typed.join("")).toBe("Hello big world");
+  });
+
+  it("keeps the typed text and says so when the stream breaks off", async () => {
+    const h = mergeHarness({
+      answer: async (_text, opts) => {
+        opts.onDelta("Hello big ");
+        throw new Error("connection reset");
+      },
+    });
+    await h.dictate();
+    h.google.resolve("google text");
+    h.mistral.resolve("mistral text");
+    await flush();
+
+    expect(h.typed.join("")).toBe("Hello big");
+    expect(h.notifications).toEqual(["Merge stopped — the text may be incomplete"]);
+  });
+
+  it("summarises the merged text and types the summary after it", async () => {
+    const h = mergeHarness({ answer: async (text) => (text.startsWith("<") ? "merged text" : "short summary") });
+    await h.dictate("summary");
+    h.google.resolve("google text");
+    h.mistral.resolve("mistral text");
+    await flush();
+
+    expect(h.calls.map((c) => c.text).at(-1)).toBe("merged text");
+    expect(h.typed.join("")).toMatch(/^merged text.+short summary$/s);
   });
 
   it("does not merge when the other model hears nothing", async () => {
@@ -474,7 +541,7 @@ describe("Controller merge model", () => {
     await flush();
 
     expect(h.calls[0].text).toMatch(/^<dictionary>\nVoiceTyper\nchax\n<\/dictionary>\n\n<transcript model="Google">/);
-    expect(h.typed).toEqual(["I use VoiceTyper at chax"]);
+    expect(h.typed.join("")).toBe("I use VoiceTyper at chax");
   });
 
   it("does not merge with only one checked model", async () => {

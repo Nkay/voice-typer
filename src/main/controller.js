@@ -61,6 +61,9 @@ class Controller {
     };
     // Where the duration of each step of a dictation is recorded.
     this.history = deps.history || { add() {}, update() {} };
+    // Keeps the audio of each dictation; save() returns the name of the
+    // recording for the history entry, or null.
+    this.recordings = deps.recordings || { save: () => null };
     this.getConfig = deps.getConfig;
     this.notify = deps.notify;
     this.minDurationMs = deps.minDurationMs != null ? deps.minDurationMs : 200;
@@ -97,14 +100,18 @@ class Controller {
     this.streams = new Map();
     this.captureSeq = 0;
     this.currentCaptureId = null;
-    this.lanes = createTypingLanes({
+    const laneDeps = {
       type: (text) => this.typer.type(text),
       onDiverted: (text) => this._divertToClipboard(text),
       onError: (err) => {
         console.error("VoiceTyper: typing failed", err);
         this.notify("VoiceTyper", "Typing failed");
       },
-    });
+    };
+    this.lanes = createTypingLanes(laneDeps);
+    // The streamed merge text has lanes of its own: a lane opens only after
+    // the release, so it must not queue behind the live lane of a later hold.
+    this.mergeLanes = createTypingLanes(laneDeps);
   }
 
   start() {
@@ -357,6 +364,11 @@ class Controller {
       typingMs: null,
       chars: 0,
       totalMs: 0,
+      // The typed transcript, the raw answer of the merge model and the name
+      // of the saved audio; each model record also holds its own text.
+      text: null,
+      mergeText: null,
+      recording: this.recordings.save(bytes, releasedAt),
     };
     this.queue.push({ bytes, mode: stop.mode, rec, timing });
     this._pump().catch((err) => console.error("VoiceTyper: pump failed", err));
@@ -394,10 +406,12 @@ class Controller {
     const model = { label, ms: null, status: "pending", typed: false };
     if (primary) model.primary = true;
     timing.models.push(model);
-    return (status, err) => {
+    return (status, err, text) => {
       model.ms = this.now() - startedAt;
       model.status = status;
       if (status === "failed") model.error = (err && err.code) || "ERROR";
+      // What the model answered, before the dictionary corrections.
+      if (text) model.text = text;
       this.history.update(timing);
       return model;
     };
@@ -417,9 +431,10 @@ class Controller {
       await rec.lane.close();
       throw err;
     }
-    settle(transcript ? "ok" : "empty").typed = Boolean(transcript);
+    settle(transcript ? "ok" : "empty", null, transcript).typed = Boolean(transcript);
     this._flushLive(rec, true);
     transcript = applyDictionary(transcript, this.dictionary.current());
+    timing.text = transcript || null;
     if (transcript) this.lastTranscripts.push({ label: "Microsoft", text: transcript });
     // The service streams the transcript as deltas; this only matters if it
     // ever sends the final transcript alone.
@@ -466,7 +481,7 @@ class Controller {
         promise: run.then(
           (raw) => {
             const t = applyDictionary(raw, dict);
-            const model = settle(t ? "ok" : "empty");
+            const model = settle(t ? "ok" : "empty", null, raw);
             if (!t) return Promise.reject(null);
             transcripts.push({ label, text: t });
             return { model, text: t };
@@ -504,7 +519,7 @@ class Controller {
 
     const winner =
       cfg.mergeModel && runs.length > 1
-        ? await this._mergeTexts(runs, dict, cfg, timing, startedAt)
+        ? await this._mergeTexts(runs, dict, cfg, timing, startedAt, mode)
         : await this._pickWinner(runs, timing, startedAt);
     if (!winner) {
       // Every model failed or heard nothing; the first real error is reported.
@@ -514,7 +529,7 @@ class Controller {
       return;
     }
     winner.model.typed = true;
-    await this._typeResult(winner.text, mode, cfg, timing);
+    if (!winner.streamed) await this._typeResult(winner.text, mode, cfg, timing);
   }
 
   // Resolves with the run whose text is typed, or with null when no model gave
@@ -551,7 +566,7 @@ class Controller {
   // the merge model. One text, or a failed merge, gives the text of the
   // primary model if it came, else the first text. The live Microsoft text is
   // ready at the release, so it does not start the clock.
-  async _mergeTexts(runs, dict, cfg, timing, startedAt) {
+  async _mergeTexts(runs, dict, cfg, timing, startedAt, mode) {
     const arrived = [];
     const all = Promise.allSettled(runs.map((run) => run.promise.then((winner) => arrived.push(winner))));
     const timed = runs.filter((run) => !run.live);
@@ -564,28 +579,76 @@ class Controller {
     const texts = [...arrived];
     if (texts.length === 1) return texts[0];
 
-    const merged = await this._mergeOrNotify(texts, dict, cfg, timing);
-    if (!merged) return texts.find((t) => t.model.primary) || texts[0];
-    this.lastTranscripts.push({ label: "Merged", text: merged });
+    // The merged text is typed while it streams in, like live Microsoft text.
+    const lane = this.mergeLanes.open();
+    const out = { lane: { push: (t) => ((out.typed += t), lane.push(t)) }, pending: "", typedAny: false, typed: "" };
+    const merged = await this._mergeOrNotify(texts, dict, cfg, timing, out);
+    if (!out.typedAny) {
+      lane.discard();
+      return texts.find((t) => t.model.primary) || texts[0];
+    }
+    const text = out.typed;
+    this.lastTranscripts.push({ label: "Merged", text });
     for (const t of texts) t.model.typed = true;
-    return { model: texts[0].model, text: merged };
+    let chars = text.length;
+    if (mode === "summary" && merged) {
+      const summary = await this._summarizeOrNotify(merged, cfg, timing);
+      if (summary) {
+        const rest = separatorText(cfg.separator) + summary;
+        lane.push(rest);
+        chars += rest.length;
+      }
+    }
+    const closeAt = this.now();
+    await lane.close();
+    timing.typingMs = this.now() - closeAt;
+    timing.chars = chars;
+    timing.text = text;
+    return { model: texts[0].model, text, streamed: true };
   }
 
-  // Returns the merged text, or null after telling the user the merge failed.
-  async _mergeOrNotify(texts, dict, cfg, timing) {
+  // Streams the merged text into `out` (see _flushLive) and returns it, or
+  // returns null after telling the user the merge failed. A merge that fails
+  // after some text was typed keeps that text.
+  async _mergeOrNotify(texts, dict, cfg, timing, out) {
     const startedAt = this.now();
+    const longest = Math.max(...texts.map((t) => t.text.length));
+    let tooLong = false;
+    timing.mergeText = "";
+    const onDelta = (delta) => {
+      timing.mergeText += delta;
+      // Much longer than every transcript: the model answered the dictation.
+      if (timing.mergeText.length > 2 * longest + 20) {
+        tooLong = true;
+        throw new Error("merged text too long");
+      }
+      out.pending += out.typedAny || out.pending ? delta : delta.trimStart();
+      // Spaces at the end wait for more text, so a finished text never ends in one.
+      const body = out.pending.trimEnd();
+      const tail = out.pending.slice(body.length);
+      out.pending = body;
+      this._flushLive(out);
+      out.pending += tail;
+    };
     try {
       const parts = texts.map((t) => `<transcript model="${t.model.label}">\n${t.text}\n</transcript>`);
       if (dict.hints.length > 0) parts.unshift(`<dictionary>\n${dict.hints.join("\n")}\n</dictionary>`);
-      const merged = await this._chat(cfg.mergeModel, MERGE_PROMPT, parts.join("\n\n"), MERGE_TIMEOUT_MS);
-      // Much longer than every transcript: the model answered the dictation.
-      const longest = Math.max(...texts.map((t) => t.text.length));
-      if (merged.length > 2 * longest + 20) throw new Error("merged text too long");
+      const merged = await this._chat(cfg.mergeModel, MERGE_PROMPT, parts.join("\n\n"), MERGE_TIMEOUT_MS, onDelta);
+      out.pending = out.pending.trimEnd();
+      this._flushLive(out, true);
       return applyDictionary(merged, dict);
     } catch (err) {
       console.error("VoiceTyper: merge failed", err);
-      this.notify("VoiceTyper", "Merge failed — typed one transcript");
       timing.mergeFailed = true;
+      if (!out.typedAny) {
+        this.notify("VoiceTyper", "Merge failed — typed one transcript");
+      } else if (tooLong) {
+        this.notify("VoiceTyper", "The merge model wrote too much — typing stopped");
+      } else {
+        out.pending = out.pending.trimEnd();
+        this._flushLive(out, true);
+        this.notify("VoiceTyper", "Merge stopped — the text may be incomplete");
+      }
       return null;
     } finally {
       timing.mergeMs = this.now() - startedAt;
@@ -599,6 +662,7 @@ class Controller {
     else await this._safeType(() => this.typer.type(text));
     timing.typingMs = this.now() - startedAt;
     timing.chars = text.length + (summary ? separatorText(cfg.separator).length + summary.length : 0);
+    timing.text = text;
   }
 
   // Returns the summary, or null after telling the user it failed.
@@ -618,7 +682,7 @@ class Controller {
 
   // Sends `text` to a chat model: "google/<id>", or "mistral/<id>" or "<id>"
   // for Mistral.
-  _chat(modelId, prompt, text, timeoutMs = 10000) {
+  _chat(modelId, prompt, text, timeoutMs = 10000, onDelta = null) {
     const isGoogle = modelId.startsWith("google/");
     const chatFn = isGoogle ? this.googleSummarize : this.summarize;
     return chatFn(text, {
@@ -627,6 +691,7 @@ class Controller {
       prompt,
       timeoutMs,
       maxAttempts: 1,
+      onDelta,
     });
   }
 

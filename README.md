@@ -92,16 +92,22 @@ Gemini Flash-Lite or a small Mistral model. The merge model:
 - spells the terms of your [dictionary](#dictionary) as listed,
 - keeps everything else as you said it.
 
+The merged text is typed while it streams in, so the first words appear
+quickly. Gemini 3 and later models (not Flash-Lite, which already thinks at
+"minimal") are asked for low thinking, for the merge and for the summary, so
+they answer faster.
+
 VoiceTyper waits for the other models until 2 times the answer time of the
 first one: an answer after 1.0 s gives the others until 2.0 s. The realtime
 Microsoft transcript is ready at the release, so the clock starts with the
 first other answer. Then VoiceTyper merges the transcripts that arrived. The
 merge model gets at most 100 dictionary terms and 5 s to answer.
 
-When only one transcript arrived, or when the merge fails, a transcript is
-typed as without a merge model (the primary's, if it arrived). A merged text
-that is much longer than every transcript counts as failed: the model then
-answered the dictation instead of writing it down. The timing history shows the
+When only one transcript arrived, or when the merge fails before its first
+words, a transcript is typed as without a merge model (the primary's, if it
+arrived). A merge that breaks off later keeps the text typed so far and says
+so. When the merged text gets much longer than every transcript, typing stops:
+the model then answered the dictation instead of writing it down. The timing history shows the
 wait and the merge as their own steps, and a double press copies the merged
 text under `[Merged]`.
 
@@ -182,10 +188,26 @@ each one how long every step took:
   **Microsoft** alone the text is typed while you speak, so the row shows only
   the typing that was left after the final transcript arrived.
 
+Under each model row is what that model answered, under **merge** the answer
+of the merge model, and under **typing** the text that was typed. **Play
+recording** plays the audio of the dictation, so you can compare what you said
+with what came back.
+
 The heading of each dictation gives the length of the recording and the total
 time from the release of the key until typing finished. The slowest step on the
 way to the typed text is highlighted. The window updates while it is open, and
 **Clear** empties the list.
+
+### Recordings folder
+
+VoiceTyper keeps the audio of the last 500 dictations in the `recordings` folder
+next to `config.json` (open it with **Recordings folder** in the timing
+history). Each dictation has a WAV file and a JSON file with the same name, for
+example `2026-11-15_16-05-19-007.wav`. The JSON file holds the history entry:
+the time of each step, what each model answered (before the dictionary
+corrections), the answer of the merge model and the typed text. Use the folder
+to find out where a strange result came from. **Clear** in the timing history
+does not delete it. A dictation too short to type anything is not saved.
 
 ### Dictionary
 
@@ -408,6 +430,9 @@ The summary command sends the transcript text to the summary model's API in a
 second request, so a summarised dictation reaches a provider twice: once as
 audio, once as text. If you pick a Gemini summary model while transcribing with
 Mistral (or the reverse), that second request goes to the other provider.
+
+VoiceTyper itself keeps the audio and the texts of the last 500 dictations on
+your PC, unencrypted, in the [recordings folder](#recordings-folder).
 
 No provider receives the audio as a stored file: the recording travels inside
 the request (or, for Microsoft, the WebSocket session) itself, rather than being
