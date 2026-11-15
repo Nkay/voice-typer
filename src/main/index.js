@@ -12,7 +12,7 @@ const {
   shell,
 } = require("electron");
 
-const { keyboard, Key } = require("@nut-tree-fork/nut-js");
+const { keyboard, Key, providerRegistry } = require("@nut-tree-fork/nut-js");
 
 const { boot } = require("./boot.js");
 const { createKeyPoller, createWin32KeyState, createModifierProbe } = require("./keyPoller.js");
@@ -42,4 +42,7 @@ boot({
   shell,
   keyboard,
   Key,
+  // keyboard.type pauses before each character. The provider below it types a
+  // whole string in one native call.
+  typeBlock: (text) => providerRegistry.getKeyboard().type(text),
 });

@@ -13,10 +13,16 @@ const STREAM_SLICE_SECONDS = 0.05;
 // Echoed with every chunk and the final PCM so the main process can match them
 // to the hold that started this capture.
 let captureId = null;
+// Counts the captures. Opening the microphone takes time, and quick taps can
+// stop a capture and start the next one before the first has opened it.
+let generation = 0;
 
 async function startCapture(opts) {
   if (recording) return;
   recording = true;
+  const mine = ++generation;
+  // False once this capture was stopped, also when a newer one runs by now.
+  const current = () => recording && mine === generation;
   chunks = [];
   streaming = Boolean(opts && opts.stream);
   captureId = opts && opts.id != null ? opts.id : null;
@@ -31,24 +37,28 @@ async function startCapture(opts) {
       ...(opts && opts.micDeviceId ? { deviceId: { ideal: opts.micDeviceId } } : {}),
     },
   };
+  // The stream and the context stay local until the capture is set up. The
+  // shared variables can belong to a newer capture by then, so a capture that
+  // was stopped in the meantime releases only what it opened itself.
   const stream = await navigator.mediaDevices.getUserMedia(constraints);
-  // A stop may have arrived while getUserMedia was pending; if so, tear down and bail.
-  if (!recording) {
+  let context = null;
+  const release = () => {
     stream.getTracks().forEach((t) => t.stop());
-    return;
-  }
+    if (context) context.close();
+  };
+  if (!current()) return release();
+  context = new AudioContext();
+  await context.audioWorklet.addModule("recorder-worklet.js").catch((err) => {
+    release();
+    throw err;
+  });
+  if (!current()) return release();
   mediaStream = stream;
-  audioContext = new AudioContext();
-  await audioContext.audioWorklet.addModule("recorder-worklet.js");
-  // A stop may have arrived while the worklet module was loading.
-  if (!recording) {
-    cleanup();
-    return;
-  }
+  audioContext = context;
   sourceNode = audioContext.createMediaStreamSource(mediaStream);
   workletNode = new AudioWorkletNode(audioContext, "recorder-processor");
   workletNode.port.onmessage = (e) => {
-    if (!recording) return;
+    if (!current()) return;
     chunks.push(e.data);
     if (streaming) {
       streamBlocks.push(e.data);
@@ -104,11 +114,16 @@ function cleanup() {
   audioContext = workletNode = mediaStream = sourceNode = null;
 }
 
-window.capture.onStart((opts) =>
-  startCapture(opts).catch((err) => {
+window.capture.onStart((opts) => {
+  const run = startCapture(opts);
+  // startCapture counts up before its first wait, so this is its own number.
+  const mine = generation;
+  run.catch((err) => {
     console.error(err);
+    // A capture that failed after a newer one started must not stop that one.
+    if (mine !== generation) return;
     recording = false;
     cleanup();
-  })
-);
+  });
+});
 window.capture.onStop(() => stopCapture());

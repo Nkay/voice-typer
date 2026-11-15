@@ -44,6 +44,15 @@ function createTyper({
   modifierTimeoutMs = 10000,
   pollMs = 15,
   sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+  // Sends a run of characters at once. keyboard.type pauses before every
+  // character; the real sender (see index.js) hands the run to the native
+  // layer in one call.
+  typeBlock = (text) => keyboard.type(text),
+  // A block is sent in one call without a pause, so the modifier check before
+  // it is nearly as good as a check before each character. The pause between
+  // two blocks lets the target app keep up.
+  blockSize = 20,
+  blockPauseMs = 2,
 }) {
   // A raw "\n" handed to nut-js becomes a bare Enter, which submits chat inputs.
   // Shift+Enter is a newline everywhere that matters and submits nowhere.
@@ -54,10 +63,10 @@ function createTyper({
     await keyboard.releaseKey(Key.LeftShift, Key.Return);
   };
 
-  // nut-js injects one character at a time, and Windows combines each one with
-  // whatever modifiers are physically down at that moment. Checking before every
-  // character keeps a key pressed mid-transcript (for example AltGr for the next
-  // dictation) from turning the rest of the text into shortcuts.
+  // Windows combines each injected character with whatever modifiers are
+  // physically down at that moment. Checking before every block keeps a key
+  // pressed mid-transcript (for example AltGr for the next dictation) from
+  // turning the rest of the text into shortcuts.
   const waitForModifiers = async (remaining) => {
     let waitedMs = 0;
     while (isModifierDown()) {
@@ -71,17 +80,30 @@ function createTyper({
     }
   };
 
-  // A raw "\n" must never reach keyboard.type: both the plain transcript and
+  // A raw "\n" must never reach typeBlock: both the plain transcript and
   // each part handed to typeParts are model output, and either can contain a
   // newline nut-js would turn into a bare Enter press. Route every newline
   // through softNewline instead.
   const type = async (text) => {
     if (!text) return;
     const chars = Array.from(sanitize(text));
-    for (let i = 0; i < chars.length; i++) {
+    let i = 0;
+    let afterBlock = false;
+    while (i < chars.length) {
+      if (chars[i] === "\n") {
+        await waitForModifiers(() => chars.slice(i).join(""));
+        await softNewline();
+        i++;
+        afterBlock = false;
+        continue;
+      }
+      let end = i;
+      while (end < chars.length && end - i < blockSize && chars[end] !== "\n") end++;
+      if (afterBlock && blockPauseMs > 0) await sleep(blockPauseMs);
       await waitForModifiers(() => chars.slice(i).join(""));
-      if (chars[i] === "\n") await softNewline();
-      else await keyboard.type(chars[i]);
+      await typeBlock(chars.slice(i, end).join(""));
+      i = end;
+      afterBlock = true;
     }
   };
 

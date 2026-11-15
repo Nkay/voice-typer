@@ -250,6 +250,22 @@ describe("summaryModifierError", () => {
     expect(cfg.mergeConfig({ microsoftEndpoint: 42 }).microsoftEndpoint).toBe("");
   });
 
+  it("has no primary model by default", () => {
+    expect(cfg.mergeConfig({}).primaryModel).toBe("");
+  });
+
+  it("keeps a primary model that is one of the checked models", () => {
+    expect(cfg.mergeConfig({ transcriptionModels: ["mistral", "google"], primaryModel: "google" }).primaryModel).toBe(
+      "google"
+    );
+  });
+
+  it("drops a primary model that is not checked or not known", () => {
+    for (const value of ["microsoft", "openai", null, 5]) {
+      expect(cfg.mergeConfig({ transcriptionModels: ["mistral", "google"], primaryModel: value }).primaryModel).toBe("");
+    }
+  });
+
   it("falls back to the default deployment for a blank one", () => {
     expect(cfg.mergeConfig({ microsoftDeployment: "  " }).microsoftDeployment).toBe("MAI-Transcribe-2-Streaming");
     expect(cfg.mergeConfig({ microsoftDeployment: " my-deploy " }).microsoftDeployment).toBe("my-deploy");

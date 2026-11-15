@@ -1,7 +1,7 @@
 const path = require("path");
 const { trayView } = require("../shared/trayState.js");
 
-function createTray({ Tray, Menu, nativeImage, iconDir, onTogglePause, onOpenSettings, onQuit, isPaused }) {
+function createTray({ Tray, Menu, nativeImage, iconDir, onTogglePause, onOpenSettings, onOpenHistory, onQuit, isPaused }) {
   const iconFor = (name) => nativeImage.createFromPath(path.join(iconDir, `${name}.png`));
 
   const tray = new Tray(iconFor("active"));
@@ -11,6 +11,7 @@ function createTray({ Tray, Menu, nativeImage, iconDir, onTogglePause, onOpenSet
       { label: "Paused", type: "checkbox", checked: isPaused(), click: onTogglePause },
       { type: "separator" },
       { label: "Settings…", click: onOpenSettings },
+      { label: "Timing history…", click: onOpenHistory },
       { label: "Quit", click: onQuit },
     ]);
     tray.setContextMenu(menu);

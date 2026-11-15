@@ -1,0 +1,36 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>VoiceTyper Timing History</title>
+    <style>
+      body { font-family: Segoe UI, sans-serif; margin: 16px; font-size: 14px; }
+      header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+      h1 { font-size: 16px; margin: 0; }
+      button { padding: 6px 14px; }
+      .hint { color: #666; font-size: 12px; margin: 6px 0 0; }
+      .entry { border-top: 1px solid #ddd; margin-top: 14px; padding-top: 10px; }
+      .entry h2 { font-size: 14px; margin: 0; }
+      .entry .summary { color: #444; margin: 2px 0 6px; }
+      table { border-collapse: collapse; width: 100%; }
+      td { padding: 2px 12px 2px 0; vertical-align: top; }
+      td.value { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; width: 70px; }
+      td.note { color: #666; }
+      tr.slowest td { font-weight: 600; color: #b26500; }
+      #empty { color: #666; margin-top: 24px; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>Timing history</h1>
+      <button id="clear">Clear</button>
+    </header>
+    <p class="hint">
+      Newest dictation first. Each row is the duration of one step. The slowest step on the way to the
+      typed text is highlighted. The history holds times and character counts only, not the text.
+    </p>
+    <p id="empty" hidden>No dictation yet.</p>
+    <div id="list"></div>
+    <script src="history.js"></script>
+  </body>
+</html>
