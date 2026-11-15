@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import EventEmitter from "events";
 import { Controller } from "../src/main/controller.js";
+import { parseDictionary } from "../src/shared/dictionary.js";
 import { MicrosoftError } from "../src/shared/microsoft.js";
 import { TyperError } from "../src/main/typer.js";
 
@@ -110,6 +111,7 @@ function harness(overrides = {}) {
         return s;
       }),
     copyToClipboard: (t) => clipboard.push(t),
+    dictionary: overrides.dictionary,
     getConfig: () => config,
     notify: (t, b) => notifications.push(b),
     minDurationMs: 200,
@@ -404,7 +406,7 @@ describe("Controller with Microsoft and other models", () => {
     h.fireWav(wavOfMs(1200), id);
     await flush();
     expect(h.batchCalls).toEqual([
-      { apiKey: "ms-key", endpoint: "https://res.services.ai.azure.com", language: "de" },
+      { apiKey: "ms-key", endpoint: "https://res.services.ai.azure.com", language: "de", hints: [] },
     ]);
     expect(h.typed).toEqual(["batch text"]);
     h.sessions[0].complete("late session text");
@@ -475,5 +477,63 @@ describe("Controller clipboard fallback", () => {
     await flush();
     await flush();
     expect(h.clipboard).toEqual(["locked more"]);
+  });
+});
+
+describe("Controller with Microsoft and a dictionary", () => {
+  const dictionaryOf = (text) => {
+    const dict = parseDictionary(text);
+    return { load: async () => dict, current: () => dict };
+  };
+
+  it("corrects live text and holds back the last word until it is complete", async () => {
+    const h = harness({ dictionary: dictionaryOf("Tschax => chax") });
+    h.hotkey.emit("record-start");
+    const id = h.lastId();
+    h.advance(1200);
+    h.sessions[0].delta("Hallo Tsch");
+    await flush();
+    expect(h.typed).toEqual(["Hallo "]);
+    h.sessions[0].delta("ax sagt");
+    await flush();
+    expect(h.typed).toEqual(["Hallo ", "chax "]);
+    h.hotkey.emit("record-stop");
+    h.fireWav(wavOfMs(1200), id);
+    h.sessions[0].delta(" Tschax");
+    h.sessions[0].complete("Hallo Tschax sagt Tschax");
+    await flush();
+    expect(h.typed).toEqual(["Hallo ", "chax ", "sagt ", "chax"]);
+    expect(h.controller.lastTranscripts).toEqual([{ label: "Microsoft", text: "Hallo chax sagt chax" }]);
+  });
+
+  it("holds back as many words as the longest phrase has", async () => {
+    const h = harness({ dictionary: dictionaryOf("Voice Typer => VoiceTyper") });
+    h.hotkey.emit("record-start");
+    h.advance(1200);
+    h.sessions[0].delta("open voice ");
+    await flush();
+    expect(h.typed).toEqual([]);
+    h.sessions[0].delta("typer now ");
+    await flush();
+    expect(h.typed).toEqual(["open "]);
+    h.sessions[0].delta("more ");
+    await flush();
+    expect(h.typed).toEqual(["open ", "VoiceTyper "]);
+  });
+
+  it("corrects the live session transcript when it joins a race", async () => {
+    const h = harness({
+      config: { transcriptionModels: ["microsoft", "mistral"] },
+      transcribe: () => new Promise(() => {}),
+      dictionary: dictionaryOf("Tschax => chax"),
+    });
+    h.hotkey.emit("record-start");
+    const id = h.lastId();
+    h.advance(1200);
+    h.hotkey.emit("record-stop");
+    h.fireWav(wavOfMs(1200), id);
+    h.sessions[0].complete("bei Tschax");
+    await flush();
+    expect(h.typed).toEqual(["bei chax"]);
   });
 });

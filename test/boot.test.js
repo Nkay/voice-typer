@@ -553,6 +553,70 @@ describe("boot wiring", () => {
   });
 });
 
+describe("boot dictionary file", () => {
+  const validConfig = (extra) => ({
+    recordKey: "RIGHT ALT",
+    summaryModifier: "RIGHT SHIFT",
+    transcriptionModels: ["mistral"],
+    ...extra,
+  });
+
+  function bootWithDialog(dialog) {
+    const { deps, captured } = fakeDeps();
+    const opened = [];
+    deps.dialog = dialog;
+    deps.shell = { openPath: async (p) => (opened.push(p), "") };
+    deps.env = { OneDriveCommercial: path.join(captured.userDataDir, "OneDrive - Firma") };
+    boot(deps);
+    captured.readyCb();
+    return { captured, opened };
+  }
+
+  it("creates a new file from the template in the OneDrive folder and never overwrites one", async () => {
+    let defaultPath;
+    const { captured } = bootWithDialog({
+      showSaveDialog: async (_win, opts) => {
+        defaultPath = opts.defaultPath;
+        return { canceled: false, filePath: path.join(captured.userDataDir, "dict.txt") };
+      },
+    });
+    expect(captured.handlers).toHaveProperty("dictionary:create");
+    const result = await captured.handlers["dictionary:create"]();
+    expect(defaultPath).toBe(path.join(captured.userDataDir, "OneDrive - Firma", "VoiceTyper dictionary.txt"));
+    expect(result.info).toEqual({ ok: true, terms: 0, corrections: 0 });
+    fs.writeFileSync(result.path, "chax\n");
+    const again = await captured.handlers["dictionary:create"]();
+    expect(fs.readFileSync(again.path, "utf8")).toBe("chax\n");
+    expect(again.info).toMatchObject({ terms: 1 });
+  });
+
+  it("saves only a path that the user selected and then lets the Settings window open it", async () => {
+    const { captured, opened } = bootWithDialog({ showOpenDialog: async () => ({ canceled: false, filePaths: [] }) });
+    const file = path.join(captured.userDataDir, "dict.txt");
+    fs.writeFileSync(file, "chax\n");
+
+    const refused = await captured.handlers["settings:save"]({}, { config: validConfig({ dictionaryPath: file }) });
+    expect(refused.ok).toBe(false);
+    expect(await captured.handlers["dictionary:open"]({}, file)).toBe("This file cannot be opened.");
+
+    const { captured: c2, opened: opened2 } = bootWithDialog({
+      showOpenDialog: async () => ({ canceled: false, filePaths: [file] }),
+    });
+    const chosen = await c2.handlers["dictionary:choose"]();
+    expect(chosen).toEqual({ path: file, info: { ok: true, terms: 1, corrections: 0 } });
+    const saved = await c2.handlers["settings:save"]({}, { config: validConfig({ dictionaryPath: file }) });
+    expect(saved.ok).toBe(true);
+    expect(await c2.handlers["dictionary:open"]({}, file)).toBe("");
+    expect(opened2).toEqual([file]);
+    expect(opened).toEqual([]);
+  });
+
+  it("returns null when the user cancels the dialog", async () => {
+    const { captured } = bootWithDialog({ showOpenDialog: async () => ({ canceled: true, filePaths: [] }) });
+    expect(await captured.handlers["dictionary:choose"]()).toBeNull();
+  });
+});
+
 describe("timing history window", () => {
   const storedEntry = {
     at: 1000,

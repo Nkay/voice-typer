@@ -9,28 +9,37 @@ const MODEL = "MAI-Transcribe-2";
 // (<resource>.cognitiveservices.azure.com), with the same key. No retry: the
 // other answers in the race cover a failed request.
 async function transcribe(wavBytes, opts = {}) {
-  const { apiKey, endpoint, language = "auto", fetchImpl = fetch, timeoutMs = 30000 } = opts;
+  // hints: dictionary terms, sent as phraseList.phrases (keyword biasing).
+  const { apiKey, endpoint, language = "auto", fetchImpl = fetch, timeoutMs = 30000, hints = [] } = opts;
 
   if (!apiKey) throw new MicrosoftError("NO_API_KEY", "No Microsoft API key configured");
   const root = normalizeEndpoint(endpoint);
   if (!root) throw new MicrosoftError("NO_ENDPOINT", "No Microsoft endpoint configured");
   const host = new URL(root).host.replace(/\.services\.ai\.azure\.com$/, ".cognitiveservices.azure.com");
 
-  const definition = { enhancedMode: { enabled: true, model: MODEL } };
-  if (language && language !== "auto") definition.locales = [language];
-  const form = new FormData();
-  form.append("audio", new Blob([wavBytes], { type: "audio/wav" }), "audio.wav");
-  form.append("definition", JSON.stringify(definition));
+  const post = async (withHints) => {
+    const definition = { enhancedMode: { enabled: true, model: MODEL } };
+    if (language && language !== "auto") definition.locales = [language];
+    if (withHints) definition.phraseList = { phrases: hints };
+    const form = new FormData();
+    form.append("audio", new Blob([wavBytes], { type: "audio/wav" }), "audio.wav");
+    form.append("definition", JSON.stringify(definition));
+    try {
+      return await fetchWithTimeout(
+        `https://${host}/speechtotext/transcriptions:transcribe?api-version=${API_VERSION}`,
+        { method: "POST", headers: { "Ocp-Apim-Subscription-Key": apiKey }, body: form },
+        { fetchImpl, timeoutMs }
+      );
+    } catch (err) {
+      throw new MicrosoftError("NETWORK", `Network error: ${err.message}`);
+    }
+  };
 
-  let res;
-  try {
-    res = await fetchWithTimeout(
-      `https://${host}/speechtotext/transcriptions:transcribe?api-version=${API_VERSION}`,
-      { method: "POST", headers: { "Ocp-Apim-Subscription-Key": apiKey }, body: form },
-      { fetchImpl, timeoutMs }
-    );
-  } catch (err) {
-    throw new MicrosoftError("NETWORK", `Network error: ${err.message}`);
+  let res = await post(hints.length > 0);
+  // A transcript without hints is better than none.
+  if (res.status === 400 && hints.length > 0) {
+    console.warn("VoiceTyper: Microsoft rejected the dictionary hints; trying without them");
+    res = await post(false);
   }
   if (!res.ok) throw errorForStatus(res.status);
 

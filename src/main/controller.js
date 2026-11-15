@@ -1,5 +1,6 @@
 const { createTypingLanes } = require("./typingLanes.js");
 const { separatorText } = require("./typer.js");
+const { EMPTY: EMPTY_DICTIONARY, applyDictionary, liveCut } = require("../shared/dictionary.js");
 
 const PROVIDER_LABELS = { MicrosoftError: "Microsoft", GoogleError: "Google" };
 
@@ -29,6 +30,11 @@ class Controller {
     this.openMicrosoftStream = deps.openMicrosoftStream;
     this.microsoftTranscribe = deps.microsoftTranscribe;
     this.copyToClipboard = deps.copyToClipboard || null;
+    // { load() → Promise<dictionary>, current() → dictionary }; see dictionary.js.
+    this.dictionary = deps.dictionary || {
+      load: async () => EMPTY_DICTIONARY,
+      current: () => EMPTY_DICTIONARY,
+    };
     // Where the duration of each step of a dictation is recorded.
     this.history = deps.history || { add() {}, update() {} };
     this.getConfig = deps.getConfig;
@@ -149,6 +155,8 @@ class Controller {
     // Here, not only when Microsoft is checked: a stale live lane blocks every
     // later dictation, whatever the models are now.
     this._dropStaleStreams();
+    // Read the dictionary file during the hold, so it is ready at release.
+    this.dictionary.load();
 
     const models = cfg.transcriptionModels || ["mistral"];
     const streams = models.includes("microsoft");
@@ -224,10 +232,15 @@ class Controller {
     if (rec.qualified) this._flushLive(rec);
   }
 
-  _flushLive(rec) {
+  // With dictionary corrections, the last words stay back until the final
+  // flush: the next delta can still complete a word or a phrase to correct.
+  _flushLive(rec, final = false) {
     if (!rec.lane || rec.pending.length === 0) return;
-    rec.lane.push(rec.pending);
-    rec.pending = "";
+    const dict = this.dictionary.current();
+    const cut = final ? rec.pending.length : liveCut(rec.pending, dict);
+    if (cut === 0) return;
+    rec.lane.push(applyDictionary(rec.pending.slice(0, cut), dict));
+    rec.pending = rec.pending.slice(cut);
     rec.typedAny = true;
   }
 
@@ -373,12 +386,13 @@ class Controller {
       transcript = await rec.session.finish();
     } catch (err) {
       settle("failed", err);
-      this._flushLive(rec);
+      this._flushLive(rec, true);
       await rec.lane.close();
       throw err;
     }
     settle(transcript ? "ok" : "empty").typed = Boolean(transcript);
-    this._flushLive(rec);
+    this._flushLive(rec, true);
+    transcript = applyDictionary(transcript, this.dictionary.current());
     if (transcript) this.lastTranscripts.push({ label: "Microsoft", text: transcript });
     // The service streams the transcript as deltas; this only matters if it
     // ever sends the final transcript alone.
@@ -409,6 +423,8 @@ class Controller {
     const models = cfg.transcriptionModels || ["mistral"];
     const transcripts = [];
     this.lastTranscripts = transcripts;
+    const dict = await this.dictionary.load();
+    const hints = dict.hints;
     const runs = [];
     const startedAt = this.now();
     // An empty transcript rejects with null, so a faster silent answer does
@@ -419,7 +435,8 @@ class Controller {
       runs.push({
         primary,
         promise: run.then(
-          (t) => {
+          (raw) => {
+            const t = applyDictionary(raw, dict);
             const model = settle(t ? "ok" : "empty");
             if (!t) return Promise.reject(null);
             transcripts.push({ label, text: t });
@@ -436,17 +453,22 @@ class Controller {
       add(
         "Mistral",
         "mistral",
-        this.transcribe(bytes, { apiKey: this.getApiKey(), model: cfg.model, language: cfg.language })
+        this.transcribe(bytes, { apiKey: this.getApiKey(), model: cfg.model, language: cfg.language, hints })
       );
     }
     if (models.includes("google")) {
-      add("Google", "google", this.googleTranscribe(bytes, { apiKey: this.getGoogleApiKey(), language: cfg.language }));
+      add(
+        "Google",
+        "google",
+        this.googleTranscribe(bytes, { apiKey: this.getGoogleApiKey(), language: cfg.language, hints })
+      );
     }
     if (models.includes("microsoft")) {
       add("Microsoft", "microsoft", this.microsoftTranscribe(bytes, {
         apiKey: this.getMicrosoftApiKey(),
         endpoint: cfg.microsoftEndpoint,
         language: cfg.language,
+        hints,
       }));
     }
     if (rec) add("Microsoft (live)", "microsoft", rec.session.finish());

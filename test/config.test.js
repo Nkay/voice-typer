@@ -271,3 +271,11 @@ describe("summaryModifierError", () => {
     expect(cfg.mergeConfig({ microsoftDeployment: " my-deploy " }).microsoftDeployment).toBe("my-deploy");
   });
 });
+
+describe("config dictionaryPath", () => {
+  it("defaults to no dictionary and trims a set path", () => {
+    expect(cfg.mergeConfig({}).dictionaryPath).toBe("");
+    expect(cfg.mergeConfig({ dictionaryPath: "  C:\\OneDrive\\dict.txt " }).dictionaryPath).toBe("C:\\OneDrive\\dict.txt");
+    expect(cfg.mergeConfig({ dictionaryPath: 42 }).dictionaryPath).toBe("");
+  });
+});

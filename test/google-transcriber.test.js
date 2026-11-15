@@ -197,3 +197,47 @@ describe("google transcribe", () => {
     expect(called).toBe(false);
   });
 });
+
+describe("google transcribe with dictionary hints", () => {
+  it("sends the hints as custom_vocabulary", async () => {
+    let body;
+    const fetchImpl = async (_url, init) => {
+      body = JSON.parse(init.body);
+      return jsonResponse(200, interaction("ok"));
+    };
+    await transcribe(wav, { apiKey: "k", fetchImpl, hints: ["chax"] });
+    expect(body.generation_config.transcription_config.custom_vocabulary).toEqual(["chax"]);
+  });
+
+  it("tries once more without hints after a 400 that is not a bad key", async () => {
+    const bodies = [];
+    const fetchImpl = async (_url, init) => {
+      bodies.push(JSON.parse(init.body));
+      return bodies.length === 1 ? jsonResponse(400, { error: { message: "bad vocabulary" } }) : jsonResponse(200, interaction("ok"));
+    };
+    expect(await transcribe(wav, { apiKey: "k", fetchImpl, hints: ["chax"], maxAttempts: 1 })).toBe("ok");
+    expect(bodies[1].generation_config.transcription_config).not.toHaveProperty("custom_vocabulary");
+  });
+
+  it("tries without hints only once when the second request also gets a 400", async () => {
+    let calls = 0;
+    const fetchImpl = async () => {
+      calls++;
+      return jsonResponse(400, { error: { message: "bad vocabulary" } });
+    };
+    await expect(transcribe(wav, { apiKey: "k", fetchImpl, hints: ["chax"] })).rejects.toBeTruthy();
+    expect(calls).toBe(2);
+  });
+
+  it("does not retry a bad key", async () => {
+    let calls = 0;
+    const fetchImpl = async () => {
+      calls++;
+      return jsonResponse(400, { error: { message: "API key not valid. Please pass a valid API key." } });
+    };
+    await expect(transcribe(wav, { apiKey: "k", fetchImpl, hints: ["chax"] })).rejects.toMatchObject({
+      code: "UNAUTHORIZED",
+    });
+    expect(calls).toBe(1);
+  });
+});

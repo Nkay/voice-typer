@@ -66,6 +66,65 @@ function fillModelSelect(models, modelsError, saved) {
   }
 }
 
+let savedDictionaryPath = "";
+
+function plural(count, word) {
+  return `${count} ${word}${count === 1 ? "" : "s"}`;
+}
+
+function showDictionary(filePath, info) {
+  document.getElementById("dictionaryPath").value = filePath;
+  document.getElementById("dictionaryOpen").disabled = !filePath;
+  document.getElementById("dictionaryRemove").disabled = !filePath;
+  const line = document.getElementById("dictionaryInfo");
+  let text = "";
+  if (filePath && info && info.ok) {
+    text = `${plural(info.terms, "term")}, ${plural(info.corrections, "correction")}`;
+  } else if (filePath && info) {
+    text = info.error;
+  }
+  if (filePath !== savedDictionaryPath) {
+    text += `${text ? " — " : ""}${filePath ? "click Save to use this file" : "click Save to stop using the dictionary"}`;
+  }
+  line.textContent = text;
+  line.classList.toggle("error", Boolean(info && !info.ok));
+}
+
+async function refreshDictionaryInfo() {
+  const filePath = document.getElementById("dictionaryPath").value;
+  const info = filePath ? await window.settingsAPI.describeDictionary(filePath) : null;
+  // A file selected during the wait stays selected.
+  if (document.getElementById("dictionaryPath").value !== filePath) return;
+  showDictionary(filePath, info);
+}
+
+function wireDictionaryButtons() {
+  const pick = async (call) => {
+    const result = await call();
+    if (!result) return;
+    if (result.error) {
+      setStatus(result.error, true);
+      return;
+    }
+    showDictionary(result.path, result.info);
+    return result.path;
+  };
+  document.getElementById("dictionaryChoose").addEventListener("click", () =>
+    pick(window.settingsAPI.chooseDictionary)
+  );
+  document.getElementById("dictionaryCreate").addEventListener("click", async () => {
+    const filePath = await pick(window.settingsAPI.createDictionary);
+    if (filePath) await window.settingsAPI.openDictionary(filePath);
+  });
+  document.getElementById("dictionaryOpen").addEventListener("click", async () => {
+    const error = await window.settingsAPI.openDictionary(document.getElementById("dictionaryPath").value);
+    if (error) setStatus(error, true);
+  });
+  document.getElementById("dictionaryRemove").addEventListener("click", () => showDictionary("", null));
+  // The file is edited in another app; show the new counts when the user comes back.
+  window.addEventListener("focus", () => refreshDictionaryInfo().catch(() => {}));
+}
+
 // The primary model is one of the checked models, so the list follows the
 // checkboxes. A selection that gets unchecked falls back to "none".
 function fillPrimarySelect(selected) {
@@ -122,6 +181,10 @@ async function init() {
       : "enter your Microsoft Foundry API key";
     document.getElementById("microsoftEndpoint").value = config.microsoftEndpoint || "";
     document.getElementById("microsoftDeployment").value = config.microsoftDeployment || "";
+    savedDictionaryPath = config.dictionaryPath || "";
+    document.getElementById("dictionaryPath").value = savedDictionaryPath;
+    wireDictionaryButtons();
+    await refreshDictionaryInfo();
     await loadMics(config.micDeviceId);
 
     document.getElementById("save").addEventListener("click", async () => {
@@ -143,6 +206,7 @@ async function init() {
             primaryModel: document.getElementById("primaryModel").value,
             microsoftEndpoint: document.getElementById("microsoftEndpoint").value,
             microsoftDeployment: document.getElementById("microsoftDeployment").value,
+            dictionaryPath: document.getElementById("dictionaryPath").value,
           },
           apiKey: document.getElementById("apiKey").value,
           googleApiKey: document.getElementById("googleApiKey").value,
@@ -161,6 +225,8 @@ async function init() {
         document.getElementById("apiKey").value = "";
         document.getElementById("googleApiKey").value = "";
         document.getElementById("microsoftApiKey").value = "";
+        savedDictionaryPath = payload.config.dictionaryPath;
+        await refreshDictionaryInfo();
         setStatus("Saved", false);
         setTimeout(() => setStatus("", false), 2000);
       } catch (err) {
