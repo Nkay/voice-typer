@@ -1,13 +1,13 @@
 const fs = require("fs");
 
 // The timings of the last dictations, newest last in the file. An entry holds
-// the durations, what each model answered and what was typed. onEntry gets
-// each new or changed entry, for the dictation log next to the recordings.
+// the durations, what each model answered and what was typed. onChange gets
+// the new or changed entry (none after clear()).
 //
 // The history is a diagnostic: a file that cannot be read or written, or a
 // listener that fails, must never stop a dictation, so those errors are
 // swallowed.
-function createTimingHistory({ filePath, limit = 50, onChange = () => {}, onEntry = () => {} }) {
+function createTimingHistory({ filePath, limit = 50, onChange = () => {} }) {
   let entries = load();
 
   function load() {
@@ -28,20 +28,13 @@ function createTimingHistory({ filePath, limit = 50, onChange = () => {}, onEntr
   }
 
   function changed(entry) {
-    if (entry) {
-      try {
-        onEntry(entry);
-      } catch (err) {
-        console.error("VoiceTyper: timing history listener failed", err);
-      }
-    }
     try {
       fs.writeFileSync(filePath, JSON.stringify(entries), "utf8");
     } catch (err) {
       console.error("VoiceTyper: could not write the timing history", err);
     }
     try {
-      onChange();
+      onChange(entry);
     } catch (err) {
       console.error("VoiceTyper: timing history listener failed", err);
     }

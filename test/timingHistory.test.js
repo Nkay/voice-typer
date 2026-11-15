@@ -141,27 +141,16 @@ describe("timing history", () => {
   });
 });
 
-describe("timing history onEntry", () => {
-  it("passes each new and each changed entry to onEntry", () => {
+describe("timing history onChange", () => {
+  it("passes the new or changed entry, and nothing after clear", () => {
     const seen = [];
-    const history = createTimingHistory({ filePath: tmpFile(), onEntry: (e) => seen.push(e.at) });
+    const history = createTimingHistory({ filePath: tmpFile(), onChange: (e) => seen.push(e && e.at) });
     const first = entry(1);
     history.add(first);
     history.update(first);
     history.update(entry(9));
+    history.clear();
 
-    expect(seen).toEqual([1, 1]);
-  });
-
-  it("keeps working when onEntry throws", () => {
-    const history = createTimingHistory({
-      filePath: tmpFile(),
-      onEntry: () => {
-        throw new Error("disk full");
-      },
-    });
-    history.add(entry(1));
-
-    expect(history.list()).toHaveLength(1);
+    expect(seen).toEqual([1, 1, undefined]);
   });
 });

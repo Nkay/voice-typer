@@ -53,15 +53,17 @@ function render(list) {
 async function playRecording(name) {
   const bytes = await window.historyAPI.audio(name);
   const player = document.getElementById("player");
+  player.pause();
+  if (player.src) URL.revokeObjectURL(player.src);
   if (!bytes) {
+    player.removeAttribute("src");
     player.hidden = true;
     alert("The recording is no longer there.");
     return;
   }
-  if (player.src) URL.revokeObjectURL(player.src);
   player.src = URL.createObjectURL(new Blob([bytes], { type: "audio/wav" }));
   player.hidden = false;
-  player.play();
+  player.play().catch(() => {});
 }
 
 window.historyAPI.onChanged(render);

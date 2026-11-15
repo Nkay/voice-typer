@@ -182,9 +182,10 @@ function boot({
     state.recordings = createRecordings({ dir: path.join(userData, "recordings") });
     state.history = createTimingHistory({
       filePath: path.join(userData, "timings.json"),
-      onEntry: (entry) => state.recordings.writeEntry(entry),
-      // An open history window follows each dictation as it happens.
-      onChange: () => {
+      // The dictation log next to the recording follows each change, and an
+      // open history window follows each dictation as it happens.
+      onChange: (entry) => {
+        state.recordings.writeEntry(entry);
         if (state.historyWin && !state.historyWin.isDestroyed()) {
           state.historyWin.webContents.send("history:changed", historyRows());
         }

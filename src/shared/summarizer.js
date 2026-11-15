@@ -1,5 +1,5 @@
 const { API_BASE, MistralError, errorForStatus, fetchWithTimeout } = require("./mistral.js");
-const { streamEvents } = require("./sse.js");
+const { streamText } = require("./sse.js");
 
 const CHAT_ENDPOINT = `${API_BASE}/chat/completions`;
 
@@ -34,7 +34,10 @@ async function summarize(transcript, opts = {}) {
     ],
   };
   const headers = { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" };
-  if (onDelta) return streamSummary(request, headers, { fetchImpl, timeoutMs, onDelta });
+  if (onDelta) {
+    const init = { method: "POST", headers, body: JSON.stringify({ ...request, stream: true }) };
+    return streamSummary(init, { fetchImpl, timeoutMs, onDelta });
+  }
   const body = JSON.stringify(request);
 
   let lastNetworkError;
@@ -43,14 +46,7 @@ async function summarize(transcript, opts = {}) {
     try {
       res = await fetchWithTimeout(
         CHAT_ENDPOINT,
-        {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${apiKey}`,
-            "Content-Type": "application/json",
-          },
-          body,
-        },
+        { method: "POST", headers, body },
         { fetchImpl, timeoutMs }
       );
     } catch (err) {
@@ -78,33 +74,28 @@ async function summarize(transcript, opts = {}) {
   throw lastNetworkError;
 }
 
-async function streamSummary(request, headers, { fetchImpl, timeoutMs, onDelta }) {
-  let text = "";
-  const onData = (data) => {
-    if (data === "[DONE]") return;
-    let delta;
-    try {
-      delta = JSON.parse(data).choices[0].delta.content;
-    } catch {
-      return;
-    }
-    if (typeof delta !== "string" || delta.length === 0) return;
-    text += delta;
-    onDelta(delta);
-  };
-  let res;
+// The last event, "[DONE]", is no JSON and gives no text.
+function deltaOf(data) {
   try {
-    res = await streamEvents(
-      CHAT_ENDPOINT,
-      { method: "POST", headers, body: JSON.stringify({ ...request, stream: true }) },
-      { fetchImpl, timeoutMs, onData }
-    );
+    const delta = JSON.parse(data).choices[0].delta.content;
+    return typeof delta === "string" ? delta : "";
+  } catch {
+    return "";
+  }
+}
+
+async function streamSummary(init, { fetchImpl, timeoutMs, onDelta }) {
+  let result;
+  try {
+    result = await streamText(CHAT_ENDPOINT, init, { fetchImpl, timeoutMs, deltaOf, onDelta });
   } catch (err) {
+    if (err.fromCaller) throw err;
     throw new MistralError("NETWORK", `Network error: ${err.message}`);
   }
-  if (!res.ok) throw errorForStatus(res.status);
-  if (text.trim().length === 0) throw new MistralError("BAD_RESPONSE", "Empty summary from chat API");
-  return text.trim();
+  if (!result.res.ok) throw errorForStatus(result.res.status);
+  const text = result.text.trim();
+  if (text.length === 0) throw new MistralError("BAD_RESPONSE", "Empty summary from chat API");
+  return text;
 }
 
 module.exports = { summarize, CHAT_ENDPOINT };

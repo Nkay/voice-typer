@@ -8,7 +8,7 @@ function modelRow(model, anyTyped) {
     note: "",
     ms: model.ms,
     onPath: model.typed || !anyTyped,
-    text: model.text || "",
+    text: model.text,
   };
   switch (model.status) {
     case "ok":
@@ -55,7 +55,7 @@ function describeTiming(entry) {
       value: seconds(entry.mergeMs),
       note: entry.mergeFailed ? "failed" : "",
       ms: entry.mergeMs,
-      text: entry.mergeText || "",
+      text: entry.mergeText,
     });
   }
   if (entry.summaryMs != null) {
@@ -64,6 +64,7 @@ function describeTiming(entry) {
       value: seconds(entry.summaryMs),
       note: entry.summaryFailed ? "failed" : "",
       ms: entry.summaryMs,
+      text: entry.summaryText,
     });
   }
   if (typed) {
@@ -73,7 +74,7 @@ function describeTiming(entry) {
       value: seconds(entry.typingMs),
       note: entry.live ? `${entry.chars} characters in total, typed live` : `${entry.chars} characters`,
       ms: entry.typingMs,
-      text: entry.text || "",
+      text: entry.text,
     });
   }
 

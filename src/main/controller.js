@@ -18,8 +18,13 @@ const PRIMARY_PATIENCE = 1.5;
 // time of the first model. Then the texts that arrived are merged.
 const MERGE_PATIENCE = 2;
 
-// A merge waits for its answer at most this long; then a transcript is typed.
+// The longest silence of the merge model, before its first words and between
+// two pieces; then the merge counts as failed.
 const MERGE_TIMEOUT_MS = 5000;
+
+// A merged text longer than this is no transcript any more: the model answered
+// the dictation instead of writing it down.
+const mergeLimit = (longestTranscript) => 2 * longestTranscript + 20;
 
 const MERGE_PROMPT = [
   "You get two or more transcripts of the same dictation, each from a different speech recognition model.",
@@ -364,10 +369,12 @@ class Controller {
       typingMs: null,
       chars: 0,
       totalMs: 0,
-      // The typed transcript, the raw answer of the merge model and the name
-      // of the saved audio; each model record also holds its own text.
+      // The typed transcript, the raw answer of the merge model, the summary
+      // and the name of the saved audio; each model record also holds its own
+      // text.
       text: null,
       mergeText: null,
+      summaryText: null,
       recording: this.recordings.save(bytes, releasedAt),
     };
     this.queue.push({ bytes, mode: stop.mode, rec, timing });
@@ -442,17 +449,23 @@ class Controller {
       rec.lane.push(transcript);
       rec.typedAny = true;
     }
-    let chars = (transcript || "").length;
-    if (mode === "summary" && transcript) {
-      const summary = await this._summarizeOrNotify(transcript, cfg, timing);
+    await this._closeLane(rec.lane, transcript || "", mode, cfg, timing);
+  }
+
+  // Ends a lane whose text was pushed as it came: adds the summary in summary
+  // mode and records how long the rest of the typing took.
+  async _closeLane(lane, text, mode, cfg, timing) {
+    let chars = text.length;
+    if (mode === "summary" && text) {
+      const summary = await this._summarizeOrNotify(text, cfg, timing);
       if (summary) {
         const rest = separatorText(cfg.separator) + summary;
-        rec.lane.push(rest);
+        lane.push(rest);
         chars += rest.length;
       }
     }
     const closeAt = this.now();
-    await rec.lane.close();
+    await lane.close();
     timing.typingMs = this.now() - closeAt;
     timing.chars = chars;
   }
@@ -563,9 +576,11 @@ class Controller {
 
   // Resolves like _pickWinner. Waits for the texts of all models, at most
   // MERGE_PATIENCE times the answer time of the first one, and gives them to
-  // the merge model. One text, or a failed merge, gives the text of the
-  // primary model if it came, else the first text. The live Microsoft text is
-  // ready at the release, so it does not start the clock.
+  // the merge model. One text, or a merge that fails before its first words,
+  // gives the text of the primary model if it came, else the first text. The
+  // merged text is typed while it streams in; the result then has
+  // `streamed: true`, also when the merge broke off after some words. The live
+  // Microsoft text is ready at the release, so it does not start the clock.
   async _mergeTexts(runs, dict, cfg, timing, startedAt, mode) {
     const arrived = [];
     const all = Promise.allSettled(runs.map((run) => run.promise.then((winner) => arrived.push(winner))));
@@ -581,44 +596,41 @@ class Controller {
 
     // The merged text is typed while it streams in, like live Microsoft text.
     const lane = this.mergeLanes.open();
-    const out = { lane: { push: (t) => ((out.typed += t), lane.push(t)) }, pending: "", typedAny: false, typed: "" };
-    const merged = await this._mergeOrNotify(texts, dict, cfg, timing, out);
+    // The fields of a live record (see _flushLive); `typed` collects the text
+    // pushed to the lane.
+    const out = {
+      lane: {
+        push(text) {
+          out.typed += text;
+          lane.push(text);
+        },
+      },
+      pending: "",
+      typedAny: false,
+      typed: "",
+    };
+    await this._mergeOrNotify(texts, dict, cfg, timing, out);
     if (!out.typedAny) {
       lane.discard();
       return texts.find((t) => t.model.primary) || texts[0];
     }
-    const text = out.typed;
-    this.lastTranscripts.push({ label: "Merged", text });
+    this.lastTranscripts.push({ label: "Merged", text: out.typed });
     for (const t of texts) t.model.typed = true;
-    let chars = text.length;
-    if (mode === "summary" && merged) {
-      const summary = await this._summarizeOrNotify(merged, cfg, timing);
-      if (summary) {
-        const rest = separatorText(cfg.separator) + summary;
-        lane.push(rest);
-        chars += rest.length;
-      }
-    }
-    const closeAt = this.now();
-    await lane.close();
-    timing.typingMs = this.now() - closeAt;
-    timing.chars = chars;
-    timing.text = text;
-    return { model: texts[0].model, text, streamed: true };
+    timing.text = out.typed;
+    await this._closeLane(lane, out.typed, mode, cfg, timing);
+    return { model: texts[0].model, text: out.typed, streamed: true };
   }
 
-  // Streams the merged text into `out` (see _flushLive) and returns it, or
-  // returns null after telling the user the merge failed. A merge that fails
-  // after some text was typed keeps that text.
+  // Streams the merged text into `out` (see _flushLive). Tells the user when
+  // the merge fails; text typed before that stays.
   async _mergeOrNotify(texts, dict, cfg, timing, out) {
     const startedAt = this.now();
-    const longest = Math.max(...texts.map((t) => t.text.length));
+    const limit = mergeLimit(Math.max(...texts.map((t) => t.text.length)));
     let tooLong = false;
     timing.mergeText = "";
     const onDelta = (delta) => {
       timing.mergeText += delta;
-      // Much longer than every transcript: the model answered the dictation.
-      if (timing.mergeText.length > 2 * longest + 20) {
+      if (timing.mergeText.length > limit) {
         tooLong = true;
         throw new Error("merged text too long");
       }
@@ -630,29 +642,27 @@ class Controller {
       this._flushLive(out);
       out.pending += tail;
     };
+    let failure = null;
     try {
       const parts = texts.map((t) => `<transcript model="${t.model.label}">\n${t.text}\n</transcript>`);
       if (dict.hints.length > 0) parts.unshift(`<dictionary>\n${dict.hints.join("\n")}\n</dictionary>`);
-      const merged = await this._chat(cfg.mergeModel, MERGE_PROMPT, parts.join("\n\n"), MERGE_TIMEOUT_MS, onDelta);
-      out.pending = out.pending.trimEnd();
-      this._flushLive(out, true);
-      return applyDictionary(merged, dict);
+      await this._chat(cfg.mergeModel, MERGE_PROMPT, parts.join("\n\n"), MERGE_TIMEOUT_MS, onDelta);
     } catch (err) {
       console.error("VoiceTyper: merge failed", err);
       timing.mergeFailed = true;
-      if (!out.typedAny) {
-        this.notify("VoiceTyper", "Merge failed — typed one transcript");
-      } else if (tooLong) {
-        this.notify("VoiceTyper", "The merge model wrote too much — typing stopped");
-      } else {
-        out.pending = out.pending.trimEnd();
-        this._flushLive(out, true);
-        this.notify("VoiceTyper", "Merge stopped — the text may be incomplete");
-      }
-      return null;
-    } finally {
-      timing.mergeMs = this.now() - startedAt;
+      failure = err;
     }
+    timing.mergeMs = this.now() - startedAt;
+    // The words held back for the dictionary belong to the text, unless the
+    // model ran away.
+    if (!tooLong) {
+      out.pending = out.pending.trimEnd();
+      if (out.typedAny || !failure) this._flushLive(out, true);
+    }
+    if (!failure) return;
+    if (!out.typedAny) this.notify("VoiceTyper", "Merge failed — typed one transcript");
+    else if (tooLong) this.notify("VoiceTyper", "The merge model wrote too much — typing stopped");
+    else this.notify("VoiceTyper", "Merge stopped — the text may be incomplete");
   }
 
   async _typeResult(text, mode, cfg, timing) {
@@ -669,7 +679,8 @@ class Controller {
   async _summarizeOrNotify(text, cfg, timing) {
     const startedAt = this.now();
     try {
-      return await this._chat(cfg.summaryModel, cfg.summaryPrompt, text);
+      timing.summaryText = await this._chat(cfg.summaryModel, cfg.summaryPrompt, text);
+      return timing.summaryText;
     } catch (err) {
       console.error("VoiceTyper: summarization failed", err);
       this.notify("VoiceTyper", "Summary failed — typed transcript only");

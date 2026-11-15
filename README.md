@@ -101,15 +101,16 @@ VoiceTyper waits for the other models until 2 times the answer time of the
 first one: an answer after 1.0 s gives the others until 2.0 s. The realtime
 Microsoft transcript is ready at the release, so the clock starts with the
 first other answer. Then VoiceTyper merges the transcripts that arrived. The
-merge model gets at most 100 dictionary terms and 5 s to answer.
+merge model gets at most 100 dictionary terms. It has 5 s for its first words
+and 5 s between two pieces; a longer silence counts as a failed merge.
 
 When only one transcript arrived, or when the merge fails before its first
 words, a transcript is typed as without a merge model (the primary's, if it
 arrived). A merge that breaks off later keeps the text typed so far and says
 so. When the merged text gets much longer than every transcript, typing stops:
-the model then answered the dictation instead of writing it down. The timing history shows the
-wait and the merge as their own steps, and a double press copies the merged
-text under `[Merged]`.
+the model then answered the dictation instead of writing it down. The timing
+history shows the wait and the merge as their own steps, and a double press
+copies the merged text under `[Merged]`.
 
 ### Copy every transcript
 
@@ -205,7 +206,7 @@ next to `config.json` (open it with **Recordings folder** in the timing
 history). Each dictation has a WAV file and a JSON file with the same name, for
 example `2026-11-15_16-05-19-007.wav`. The JSON file holds the history entry:
 the time of each step, what each model answered (before the dictionary
-corrections), the answer of the merge model and the typed text. Use the folder
+corrections), the answer of the merge model, the summary and the typed text. Use the folder
 to find out where a strange result came from. **Clear** in the timing history
 does not delete it. A dictation too short to type anything is not saved.
 
@@ -392,8 +393,11 @@ provider-prefixed `summaryModel`. The API keys are stored separately
 `microsoft-key.enc` for Microsoft) in the same directory and are not part of
 this file.
 
-The timing history is stored next to it as `timings.json`. It holds durations,
-model names and character counts only — never the dictated text.
+The timing history is stored next to it as `timings.json`. It holds the
+durations and the texts of the last 50 dictations: what each model answered,
+the merge answer, the summary and the typed text. The `recordings` folder next
+to it holds the audio and the texts of the last 500 dictations (see
+[Recordings folder](#recordings-folder)).
 
 ## Building the installer
 
@@ -432,7 +436,8 @@ audio, once as text. If you pick a Gemini summary model while transcribing with
 Mistral (or the reverse), that second request goes to the other provider.
 
 VoiceTyper itself keeps the audio and the texts of the last 500 dictations on
-your PC, unencrypted, in the [recordings folder](#recordings-folder).
+your PC, unencrypted, in the [recordings folder](#recordings-folder), and the
+texts of the last 50 in `timings.json`.
 
 No provider receives the audio as a stored file: the recording travels inside
 the request (or, for Microsoft, the WebSocket session) itself, rather than being

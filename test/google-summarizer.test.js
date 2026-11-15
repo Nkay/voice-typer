@@ -133,6 +133,12 @@ describe("google summarize thinking and streaming", () => {
     expect(await thinkingOf("gemini-2.5-flash")).toBeUndefined();
   });
 
+  it("leaves out thought parts and joins the other parts of a whole answer", async () => {
+    const fetchImpl = async () =>
+      jsonResponse(200, { candidates: [{ content: { parts: [{ text: "plan", thought: true }, { text: "Hal" }, { text: "lo" }] } }] });
+    expect(await summarize("t", { apiKey: "k", fetchImpl })).toBe("Hallo");
+  });
+
   it("streams from streamGenerateContent and leaves out thought parts", async () => {
     let url;
     const pieces = [];

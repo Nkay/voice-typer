@@ -1,5 +1,5 @@
 const { GEMINI_API_BASE, GoogleError, errorForStatus, fetchWithTimeout } = require("./google.js");
-const { streamEvents } = require("./sse.js");
+const { streamText } = require("./sse.js");
 
 const TEMPERATURE = 0.2;
 
@@ -39,14 +39,18 @@ async function summarize(transcript, opts = {}) {
     throw new GoogleError("NO_TRANSCRIPT", "Nothing to summarise");
   }
 
-  const endpoint = `${GEMINI_API_BASE}/models/${model}:generateContent?key=${apiKey}`;
+  const base = `${GEMINI_API_BASE}/models/${model}`;
+  const endpoint = `${base}:generateContent?key=${apiKey}`;
 
   const body = JSON.stringify({
     systemInstruction: { parts: [{ text: prompt }] },
     contents: [{ role: "user", parts: [{ text: transcript }] }],
     generationConfig: { temperature: TEMPERATURE, thinkingConfig: thinkingConfig(model) },
   });
-  if (onDelta) return streamSummary(model, apiKey, body, { fetchImpl, timeoutMs, onDelta });
+  if (onDelta) {
+    const url = `${base}:streamGenerateContent?alt=sse&key=${apiKey}`;
+    return streamSummary(url, body, { fetchImpl, timeoutMs, onDelta });
+  }
 
   let lastNetworkError;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
@@ -79,32 +83,27 @@ async function summarize(transcript, opts = {}) {
   throw lastNetworkError;
 }
 
-async function streamSummary(model, apiKey, body, { fetchImpl, timeoutMs, onDelta }) {
-  let text = "";
-  const onData = (data) => {
-    let delta;
-    try {
-      delta = textOf(JSON.parse(data));
-    } catch {
-      return;
-    }
-    if (delta.length === 0) return;
-    text += delta;
-    onDelta(delta);
-  };
-  let res;
+function deltaOf(data) {
   try {
-    res = await streamEvents(
-      `${GEMINI_API_BASE}/models/${model}:streamGenerateContent?alt=sse&key=${apiKey}`,
-      { method: "POST", headers: { "Content-Type": "application/json" }, body },
-      { fetchImpl, timeoutMs, onData }
-    );
+    return textOf(JSON.parse(data));
+  } catch {
+    return "";
+  }
+}
+
+async function streamSummary(url, body, { fetchImpl, timeoutMs, onDelta }) {
+  const init = { method: "POST", headers: { "Content-Type": "application/json" }, body };
+  let result;
+  try {
+    result = await streamText(url, init, { fetchImpl, timeoutMs, deltaOf, onDelta });
   } catch (err) {
+    if (err.fromCaller) throw err;
     throw new GoogleError("NETWORK", `Network error: ${err.message}`);
   }
-  if (!res.ok) throw errorForStatus(res.status, await res.json().catch(() => null));
-  if (text.trim().length === 0) throw new GoogleError("BAD_RESPONSE", "Empty summary from Gemini API");
-  return text.trim();
+  if (!result.res.ok) throw errorForStatus(result.res.status, await result.res.json().catch(() => null));
+  const text = result.text.trim();
+  if (text.length === 0) throw new GoogleError("BAD_RESPONSE", "Empty summary from Gemini API");
+  return text;
 }
 
 module.exports = { summarize };

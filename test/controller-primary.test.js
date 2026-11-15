@@ -433,6 +433,54 @@ describe("Controller merge model", () => {
     finish();
     await flush();
     expect(h.typed.join("")).toBe("Hello big world");
+    const [entry] = h.history.list();
+    expect([entry.text, entry.mergeText, entry.chars]).toEqual(["Hello big world", "Hello big world", 15]);
+  });
+
+  it("types no blank space before the first word", async () => {
+    const h = mergeHarness({
+      answer: async (_text, opts) => {
+        opts.onDelta(" ");
+        opts.onDelta("\n Hello ");
+        return "";
+      },
+    });
+    await h.dictate();
+    h.google.resolve("google text");
+    h.mistral.resolve("mistral text");
+    await flush();
+
+    expect(h.typed.join("")).toBe("Hello");
+  });
+
+  it("types the transcript when the first piece is already too long", async () => {
+    const h = mergeHarness({ answer: async () => "x".repeat(100) });
+    await h.dictate();
+    h.google.resolve("google text");
+    await flush();
+    h.mistral.resolve("mistral text");
+    await flush();
+
+    expect(h.typed).toEqual(["google text"]);
+    expect(h.notifications).toEqual(["Merge failed — typed one transcript"]);
+  });
+
+  it("types the words held back for the dictionary when the stream breaks off", async () => {
+    const h = mergeHarness({
+      dictionary: parseDictionary("Voice Typer => VoiceTyper\n"),
+      answer: async (_text, opts) => {
+        opts.onDelta("I like voice ");
+        opts.onDelta("typer a lot ");
+        throw new Error("connection reset");
+      },
+    });
+    await h.dictate();
+    h.google.resolve("google text");
+    h.mistral.resolve("mistral text");
+    await flush();
+
+    expect(h.typed.join("")).toBe("I like VoiceTyper a lot");
+    expect(h.notifications).toEqual(["Merge stopped — the text may be incomplete"]);
   });
 
   it("keeps the typed text and says so when the stream breaks off", async () => {
@@ -460,6 +508,24 @@ describe("Controller merge model", () => {
 
     expect(h.calls.map((c) => c.text).at(-1)).toBe("merged text");
     expect(h.typed.join("")).toMatch(/^merged text.+short summary$/s);
+    expect(h.history.list()[0].summaryText).toBe("short summary");
+  });
+
+  it("summarises the typed part when the merge breaks off", async () => {
+    const h = mergeHarness({
+      answer: async (text, opts) => {
+        if (!text.startsWith("<")) return "short summary";
+        opts.onDelta("half of it ");
+        throw new Error("connection reset");
+      },
+    });
+    await h.dictate("summary");
+    h.google.resolve("google text");
+    h.mistral.resolve("mistral text");
+    await flush();
+
+    expect(h.calls.at(-1).text).toBe("half of it");
+    expect(h.typed.join("")).toMatch(/^half of it.+short summary$/s);
   });
 
   it("does not merge when the other model hears nothing", async () => {

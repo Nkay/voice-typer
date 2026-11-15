@@ -4,6 +4,9 @@ const path = require("path");
 // The name of a recording is its local start time, so the folder sorts by date.
 const NAME = /^\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}-\d{3}$/;
 
+// Keep in step with the README and history.html, which name the number.
+const LIMIT = 500;
+
 function nameOf(at) {
   const d = new Date(at);
   const two = (n) => String(n).padStart(2, "0");
@@ -17,55 +20,75 @@ function nameOf(at) {
 // each, its history entry as JSON: what each model answered and what was
 // typed. It is there to find out later where a strange result came from. Like
 // the timing history, a failure here never stops a dictation.
-function createRecordings({ dir, limit = 500 }) {
+//
+// The files are written in the background: a dictation must not wait for the
+// disk. The writes of one recording run in order.
+function createRecordings({ dir, limit = LIMIT, fsp = fs.promises }) {
   const file = (name, ext) => path.join(dir, `${name}.${ext}`);
+  // Per recording: the promise of its last write.
+  const writes = new Map();
+  const chain = (name, step) => {
+    const next = (writes.get(name) || Promise.resolve()).then(step);
+    writes.set(name, next);
+    return next;
+  };
 
-  function prune() {
-    const names = fs
-      .readdirSync(dir)
-      .filter((f) => f.endsWith(".wav"))
-      .map((f) => f.slice(0, -4))
-      .filter((n) => NAME.test(n))
-      .sort();
-    for (const name of names.slice(0, Math.max(0, names.length - limit))) {
-      for (const ext of ["wav", "json"]) fs.rmSync(file(name, ext), { force: true });
+  async function prune() {
+    try {
+      const names = (await fsp.readdir(dir))
+        .filter((f) => f.endsWith(".wav"))
+        .map((f) => f.slice(0, -4))
+        .filter((n) => NAME.test(n))
+        .sort();
+      for (const name of names.slice(0, Math.max(0, names.length - limit))) {
+        writes.delete(name);
+        for (const ext of ["wav", "json"]) await fsp.rm(file(name, ext), { force: true });
+      }
+    } catch (err) {
+      console.error("VoiceTyper: could not remove old recordings", err);
     }
   }
 
   return {
     dir,
-    // Returns the name of the recording, or null when it could not be saved.
+    // Returns the name of the recording at once; the file follows.
     save(wavBytes, at) {
-      try {
-        const name = nameOf(at);
-        fs.mkdirSync(dir, { recursive: true });
-        fs.writeFileSync(file(name, "wav"), wavBytes);
-        prune();
-        return name;
-      } catch (err) {
+      const name = nameOf(at);
+      chain(name, async () => {
+        await fsp.mkdir(dir, { recursive: true });
+        await fsp.writeFile(file(name, "wav"), wavBytes);
+        await prune();
+      }).catch((err) => {
+        writes.delete(name);
         console.error("VoiceTyper: could not save the recording", err);
-        return null;
-      }
+      });
+      return name;
     },
     writeEntry(entry) {
-      // A late answer can update an entry whose recording is already gone.
-      if (!entry || !entry.recording || !fs.existsSync(file(entry.recording, "wav"))) return;
-      try {
-        fs.writeFileSync(file(entry.recording, "json"), JSON.stringify(entry, null, 2), "utf8");
-      } catch (err) {
-        console.error("VoiceTyper: could not save the dictation log", err);
-      }
+      if (!entry || !entry.recording || !writes.has(entry.recording)) return;
+      const name = entry.recording;
+      const json = JSON.stringify(entry, null, 2);
+      chain(name, async () => {
+        // A late answer can update an entry whose recording is already gone.
+        if (!writes.has(name)) return;
+        await fsp.writeFile(file(name, "json"), json, "utf8");
+      }).catch((err) => console.error("VoiceTyper: could not save the dictation log", err));
     },
     // The WAV bytes of a recording, or null. Only a name made by save() is read.
-    read(name) {
+    async read(name) {
       if (typeof name !== "string" || !NAME.test(name)) return null;
+      await writes.get(name)?.catch(() => {});
       try {
-        return fs.readFileSync(file(name, "wav"));
+        return await fsp.readFile(file(name, "wav"));
       } catch {
         return null;
       }
     },
+    // Resolves when every write so far is done; for tests.
+    idle() {
+      return Promise.allSettled([...writes.values()]).then(() => {});
+    },
   };
 }
 
-module.exports = { createRecordings };
+module.exports = { createRecordings, LIMIT };

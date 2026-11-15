@@ -124,6 +124,7 @@ describe("Controller timing history", () => {
         totalMs: 1780,
         text: "hello",
         mergeText: null,
+        summaryText: null,
         recording: null,
       },
     ]);
@@ -280,6 +281,7 @@ describe("Controller timing history", () => {
         totalMs: 420,
         text: "live text",
         mergeText: null,
+        summaryText: null,
         recording: null,
       },
     ]);
