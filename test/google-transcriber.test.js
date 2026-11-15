@@ -219,6 +219,16 @@ describe("google transcribe with dictionary hints", () => {
     expect(bodies[1].generation_config.transcription_config).not.toHaveProperty("custom_vocabulary");
   });
 
+  it("tries without hints only once when the second request also gets a 400", async () => {
+    let calls = 0;
+    const fetchImpl = async () => {
+      calls++;
+      return jsonResponse(400, { error: { message: "bad vocabulary" } });
+    };
+    await expect(transcribe(wav, { apiKey: "k", fetchImpl, hints: ["chax"] })).rejects.toBeTruthy();
+    expect(calls).toBe(2);
+  });
+
   it("does not retry a bad key", async () => {
     let calls = 0;
     const fetchImpl = async () => {

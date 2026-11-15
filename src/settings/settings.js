@@ -83,14 +83,19 @@ function showDictionary(filePath, info) {
   } else if (filePath && info) {
     text = info.error;
   }
-  if (filePath !== savedDictionaryPath) text += `${text ? " — " : ""}click Save to use this file`;
+  if (filePath !== savedDictionaryPath) {
+    text += `${text ? " — " : ""}${filePath ? "click Save to use this file" : "click Save to stop using the dictionary"}`;
+  }
   line.textContent = text;
   line.classList.toggle("error", Boolean(info && !info.ok));
 }
 
 async function refreshDictionaryInfo() {
   const filePath = document.getElementById("dictionaryPath").value;
-  showDictionary(filePath, filePath ? await window.settingsAPI.describeDictionary(filePath) : null);
+  const info = filePath ? await window.settingsAPI.describeDictionary(filePath) : null;
+  // A file selected during the wait stays selected.
+  if (document.getElementById("dictionaryPath").value !== filePath) return;
+  showDictionary(filePath, info);
 }
 
 function wireDictionaryButtons() {
@@ -102,13 +107,13 @@ function wireDictionaryButtons() {
       return;
     }
     showDictionary(result.path, result.info);
+    return result.path;
   };
   document.getElementById("dictionaryChoose").addEventListener("click", () =>
     pick(window.settingsAPI.chooseDictionary)
   );
   document.getElementById("dictionaryCreate").addEventListener("click", async () => {
-    await pick(window.settingsAPI.createDictionary);
-    const filePath = document.getElementById("dictionaryPath").value;
+    const filePath = await pick(window.settingsAPI.createDictionary);
     if (filePath) await window.settingsAPI.openDictionary(filePath);
   });
   document.getElementById("dictionaryOpen").addEventListener("click", async () => {

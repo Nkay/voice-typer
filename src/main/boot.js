@@ -292,6 +292,22 @@ function boot({
       };
     });
 
+    // --- Dictionary file ---
+    // The Settings window can only open or describe a file that the user
+    // selected in a dialog of this session or that the config already names.
+    const allowedDictionaryPaths = new Set();
+    const isAllowedDictionary = (p) =>
+      typeof p === "string" && p.length > 0 && (p === state.config.dictionaryPath || allowedDictionaryPaths.has(p));
+    // A synced folder first, so every PC with the same OneDrive finds the file.
+    const dictionaryDir = () => {
+      if (state.config.dictionaryPath) return path.dirname(state.config.dictionaryPath);
+      return env.OneDriveCommercial || env.OneDrive || app.getPath("documents");
+    };
+    const chosen = async (filePath) => {
+      allowedDictionaryPaths.add(filePath);
+      return { path: filePath, info: await describeDictionaryFile(filePath) };
+    };
+
     ipcMain.handle("settings:save", async (_e, { config, apiKey, googleApiKey, microsoftApiKey }) => {
       const candidate = configModule.mergeConfig(config);
       // mergeConfig silently disables an invalid modifier; re-check the raw
@@ -363,21 +379,6 @@ function boot({
     });
 
     // --- Dictionary file IPC ---
-    // The Settings window can only open or describe a file that the user
-    // selected in a dialog of this session or that the config already names.
-    const allowedDictionaryPaths = new Set();
-    const isAllowedDictionary = (p) =>
-      typeof p === "string" && p.length > 0 && (p === state.config.dictionaryPath || allowedDictionaryPaths.has(p));
-    // A synced folder first, so every PC with the same OneDrive finds the file.
-    const dictionaryDir = () => {
-      if (state.config.dictionaryPath) return path.dirname(state.config.dictionaryPath);
-      return env.OneDriveCommercial || env.OneDrive || app.getPath("documents");
-    };
-    const chosen = async (filePath) => {
-      allowedDictionaryPaths.add(filePath);
-      return { path: filePath, info: await describeDictionaryFile(filePath) };
-    };
-
     ipcMain.handle("dictionary:choose", async () => {
       if (!dialog) return null;
       const result = await dialog.showOpenDialog(state.settingsWin, {

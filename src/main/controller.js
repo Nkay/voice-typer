@@ -421,10 +421,10 @@ class Controller {
   // the hold, the session's final transcript.
   async _race(bytes, mode, cfg, rec, timing) {
     const models = cfg.transcriptionModels || ["mistral"];
-    const dict = await this.dictionary.load();
-    const hints = dict.hints;
     const transcripts = [];
     this.lastTranscripts = transcripts;
+    const dict = await this.dictionary.load();
+    const hints = dict.hints;
     const runs = [];
     const startedAt = this.now();
     // An empty transcript rejects with null, so a faster silent answer does

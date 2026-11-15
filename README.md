@@ -288,6 +288,11 @@ The same Settings window lets you configure:
   limit (see [Primary model](#primary-model)). Defaults to none.
 - **Language** — `auto` (auto-detect), `de` (German), or `en` (English). Applies
   to whichever provider is in use.
+- **Dictionary file** — the [dictionary](#dictionary). **Choose…** selects an
+  existing file, **New…** creates one from a template (in your OneDrive folder
+  by default) and opens it, **Edit** opens the file in your text editor, and
+  **Remove** stops the use of a dictionary. The line under the buttons shows
+  the number of terms and corrections. Click **Save** to use a new selection.
 - **Record key** — the key you hold for a plain transcript. Defaults to **Right
   Alt (AltGr)**. Selectable keys are Left/Right Alt, Left/Right Ctrl,
   Left/Right Shift, F1–F24, and Space.
@@ -306,11 +311,6 @@ The same Settings window lets you configure:
 - **Separator** — what goes between the transcript and the summary: a blank
   line (typed as Shift+Enter twice, so it never submits a chat field), an em
   dash, or two spaces.
-- **Dictionary file** — the [dictionary](#dictionary). **Choose…** selects an
-  existing file, **New…** creates one from a template (in your OneDrive folder
-  by default) and opens it, **Edit** opens the file in your text editor, and
-  **Remove** stops the use of a dictionary. The line under the buttons shows
-  the number of terms and corrections. Click **Save** to use a new selection.
 - **Microphone** — which input device to record from (defaults to the system
   default device).
 - **Launch on login** — whether Windows should start VoiceTyper automatically

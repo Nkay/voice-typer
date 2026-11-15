@@ -50,9 +50,12 @@ function parseDictionary(text) {
     seenTerms.add(key);
     terms.push(term);
   };
-  const addPair = (from, to) => {
-    const key = from.replace(/\s+/g, " ").toLowerCase();
-    if (!pairs.has(key)) pairs.set(key, { from, to });
+  // A correction ("from => to") wins over the case fix of a term with the
+  // same spelling; otherwise the first line wins.
+  const addPair = (from, to, explicit) => {
+    const key = from.toLowerCase();
+    const known = pairs.get(key);
+    if (!known || (explicit && !known.explicit)) pairs.set(key, { from, to, explicit });
   };
   const clean = (part) => part.trim().replace(/\s+/g, " ");
 
@@ -63,15 +66,15 @@ function parseDictionary(text) {
     if (arrow === -1) {
       const term = clean(line);
       addTerm(term);
-      addPair(term, term);
+      addPair(term, term, false);
       continue;
     }
     const to = clean(line.slice(arrow + 2));
     if (to.length === 0) continue;
     addTerm(to);
-    addPair(to, to);
+    addPair(to, to, false);
     for (const from of line.slice(0, arrow).split(",").map(clean)) {
-      if (from.length > 0) addPair(from, to);
+      if (from.length > 0) addPair(from, to, true);
     }
   }
 
@@ -147,7 +150,10 @@ function createDictionaryStore({
     try {
       const stat = await fsp.stat(filePath);
       const stamp = `${stat.mtimeMs}:${stat.size}`;
-      if (cache.path === filePath && cache.stamp === stamp) return cache.dict;
+      if (cache.path === filePath && cache.stamp === stamp) {
+        lastErrorMessage = null;
+        return cache.dict;
+      }
       const dict = parseDictionary(await fsp.readFile(filePath, "utf8"));
       cache = { path: filePath, stamp, dict };
       lastErrorMessage = null;
@@ -190,7 +196,6 @@ function createDictionaryStore({
 
 // Summary for the Settings window. Never throws.
 async function describeDictionaryFile(filePath, fsp = fs.promises) {
-  if (!filePath) return { ok: true, terms: 0, corrections: 0 };
   try {
     const dict = parseDictionary(await fsp.readFile(filePath, "utf8"));
     const corrections = dict.replacements.filter((r) => r.from.toLowerCase() !== r.to.toLowerCase()).length;

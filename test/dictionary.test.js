@@ -52,6 +52,11 @@ describe("applyDictionary", () => {
     expect(applyDictionary("chaxing Chacksville", dict)).toBe("chaxing Chacksville");
   });
 
+  it("lets a correction win over the case fix of a term with the same spelling", () => {
+    const own = parseDictionary("Mistral\nmistral => Mistral AI\n");
+    expect(applyDictionary("I use mistral", own)).toBe("I use Mistral AI");
+  });
+
   it("matches a phrase across any whitespace and does not replace a replacement again", () => {
     expect(applyDictionary("the voice\n typer app", dict)).toBe("the VoiceTyper app");
   });
@@ -132,6 +137,21 @@ describe("createDictionaryStore", () => {
     expect((await store.load()).terms).toEqual(["chax"]);
     expect((await store.load()).terms).toEqual(["chax"]);
     expect(errors).toEqual(["Dictionary file not found"]);
+  });
+
+  it("reports the error again when it comes back after the unchanged file was readable", async () => {
+    const fsp = fakeFs({ "d.txt": { mtime: 1, text: "chax" } });
+    const errors = [];
+    const store = createDictionaryStore({ getPath: () => "d.txt", fsp, onError: (m) => errors.push(m) });
+    const file = fsp.files["d.txt"];
+    await store.load();
+    delete fsp.files["d.txt"];
+    await store.load();
+    fsp.files["d.txt"] = file;
+    await store.load();
+    delete fsp.files["d.txt"];
+    await store.load();
+    expect(errors).toEqual(["Dictionary file not found", "Dictionary file not found"]);
   });
 
   it("does not wait longer than the timeout for a slow file", async () => {

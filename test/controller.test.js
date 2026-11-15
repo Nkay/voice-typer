@@ -834,7 +834,7 @@ describe("Controller double press", () => {
 describe("Controller with a dictionary", () => {
   const dictionaryOf = (text) => {
     const dict = parseDictionary(text);
-    return { load: async () => dict, current: () => dict, loads: 0 };
+    return { load: async () => dict, current: () => dict };
   };
 
   it("gives the hints to every batch model and corrects the typed and copied text", async () => {

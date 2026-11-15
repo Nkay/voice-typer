@@ -96,6 +96,16 @@ describe("transcribe with dictionary hints", () => {
     expect(forms[1].has("context_bias")).toBe(false);
   });
 
+  it("tries without hints only once when the second request also gets a 400", async () => {
+    let calls = 0;
+    const fetchImpl = async () => {
+      calls++;
+      return jsonResponse(400, {});
+    };
+    await expect(transcribe(wav, { apiKey: "k", fetchImpl, hints: ["chax"] })).rejects.toMatchObject({ code: "HTTP" });
+    expect(calls).toBe(2);
+  });
+
   it("does not retry a 400 without hints", async () => {
     let calls = 0;
     const fetchImpl = async () => {

@@ -85,4 +85,17 @@ describe("Microsoft transcribe with dictionary hints", () => {
     expect(await transcribe(wav, { apiKey: "k", endpoint, fetchImpl, hints: ["chax"] })).toBe("ok");
     expect(definitionOf(inits[1])).not.toHaveProperty("phraseList");
   });
+
+  it("tries without the phrase list only once, and not at all without hints", async () => {
+    let calls = 0;
+    const fetchImpl = async () => {
+      calls++;
+      return jsonResponse(400, {});
+    };
+    await expect(transcribe(wav, { apiKey: "k", endpoint, fetchImpl, hints: ["chax"] })).rejects.toBeTruthy();
+    expect(calls).toBe(2);
+    calls = 0;
+    await expect(transcribe(wav, { apiKey: "k", endpoint, fetchImpl })).rejects.toBeTruthy();
+    expect(calls).toBe(1);
+  });
 });
