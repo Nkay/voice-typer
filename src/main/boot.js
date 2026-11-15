@@ -354,6 +354,11 @@ function boot({
       if (candidate.mergeModel.startsWith("google/") && !willHaveGoogleKey) {
         return { ok: false, error: "Google API key is required for this merge model." };
       }
+      // The merge runs at each dictation, so a missing key would fail each time.
+      const willHaveMistralKey = (typeof apiKey === "string" && apiKey.length > 0) || state.secrets.hasKey();
+      if (candidate.mergeModel && !candidate.mergeModel.startsWith("google/") && !willHaveMistralKey) {
+        return { ok: false, error: "Mistral API key is required for this merge model." };
+      }
       if (candidate.dictionaryPath && !isAllowedDictionary(candidate.dictionaryPath)) {
         return { ok: false, error: "Select the dictionary file with Choose… or New…." };
       }

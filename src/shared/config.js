@@ -28,7 +28,7 @@ const DEFAULTS = {
   // is preferred to a faster text of another model, within a time limit.
   primaryModel: "",
   // A chat model, prefixed like summaryModel, or "" for none. With two or more
-  // transcripts, it writes one text from them; see merger.js.
+  // transcripts, it writes one text from them (Controller._mergeTexts).
   mergeModel: "",
   // Foundry resource root, e.g. "https://my-resource.services.ai.azure.com".
   // Not a secret; the key lives in secrets like the other providers' keys.
@@ -107,7 +107,7 @@ function validateConfig(config) {
     ? ""
     : c.summaryModifier.toUpperCase();
   c.summaryModel = nonEmptyString(c.summaryModel, DEFAULTS.summaryModel);
-  c.mergeModel = nonEmptyString(c.mergeModel, "");
+  c.mergeModel = nonEmptyString(c.mergeModel, DEFAULTS.mergeModel);
   // Not trimmed: a custom prompt may end in a meaningful newline.
   c.summaryPrompt =
     typeof c.summaryPrompt === "string" && c.summaryPrompt.trim().length > 0

@@ -409,6 +409,27 @@ describe("boot wiring", () => {
     expect(result.error).toBe("Google API key is required for this merge model.");
   });
 
+  it("settings:save rejects a Mistral merge model without a Mistral key", async () => {
+    const { deps, captured } = fakeDeps();
+    fs.writeFileSync(path.join(captured.userDataDir, "google-key.enc"), Buffer.from("gk"));
+    boot(deps);
+    captured.readyCb();
+
+    const result = await captured.handlers["settings:save"](null, {
+      config: {
+        recordKey: "RIGHT ALT",
+        summaryModifier: "F13",
+        transcriptionModels: ["google"],
+        summaryModel: "google/gemini-3.7-flash",
+        mergeModel: "mistral/mistral-small-latest",
+      },
+      apiKey: "",
+      googleApiKey: "",
+    });
+    expect(result.ok).toBe(false);
+    expect(result.error).toBe("Mistral API key is required for this merge model.");
+  });
+
   it("settings:save accepts the Google model when Google key exists", async () => {
     const { deps, captured } = fakeDeps();
     fs.writeFileSync(path.join(captured.userDataDir, "google-key.enc"), Buffer.from("gk"));

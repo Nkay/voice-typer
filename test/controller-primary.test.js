@@ -313,12 +313,11 @@ describe("Controller merge model", () => {
   // Google chat model; each call is recorded and answered by `answer`.
   function mergeHarness({ config = {}, answer = async () => "merged text", dictionary } = {}) {
     const calls = [];
-    const deps = {
-      googleSummarize: async (text, opts) => {
-        calls.push({ text, opts });
-        return answer(text, opts);
-      },
+    const chat = async (text, opts) => {
+      calls.push({ text, opts });
+      return answer(text, opts);
     };
+    const deps = { googleSummarize: chat, summarize: chat };
     if (dictionary) deps.dictionary = { load: async () => dictionary, current: () => dictionary };
     const h = harness({ config: { primaryModel: "", mergeModel: "google/gemini-flash-lite", ...config }, deps });
     return { ...h, calls };
@@ -336,12 +335,75 @@ describe("Controller merge model", () => {
 
     expect(h.typed).toEqual(["merged text"]);
     expect(h.calls).toHaveLength(1);
-    expect(h.calls[0].opts).toMatchObject({ apiKey: "google-key", model: "gemini-flash-lite" });
+    expect(h.calls[0].opts).toMatchObject({
+      apiKey: "google-key",
+      model: "gemini-flash-lite",
+      prompt: expect.stringMatching(/Remove filler words/),
+      timeoutMs: 5000,
+    });
     expect(h.calls[0].text).toContain('<transcript model="Google">\ngoogle text\n</transcript>');
     expect(h.calls[0].text).toContain('<transcript model="Mistral">\nmistral text\n</transcript>');
     const entry = h.history.list()[0];
     expect(entry.mergeWaitMs).toBe(400);
+    expect(entry.mergeMs).toBe(0);
     expect(entry.models.map((m) => m.typed)).toEqual([true, true]);
+    expect(h.controller.lastTranscripts.map((t) => t.label)).toEqual(["Google", "Mistral", "Merged"]);
+  });
+
+  it("starts the clock with the first answer that is not the live Microsoft text", async () => {
+    const h = mergeHarness({
+      config: { transcriptionModels: ["google", "microsoft"], microsoftEndpoint: "https://res.services.ai.azure.com" },
+    });
+    await h.dictate();
+    h.advance(300);
+    h.sessions[0].complete("live text");
+    await flush();
+    expect(h.waits).toEqual([]);
+
+    h.advance(700);
+    h.google.resolve("google text");
+    await flush();
+    expect(h.waits.map((w) => w.ms)).toEqual([1000]);
+
+    h.waits[0].end();
+    await flush();
+    expect(h.calls[0].text).toContain('<transcript model="Microsoft (live)">\nlive text\n</transcript>');
+    expect(h.typed).toEqual(["merged text"]);
+  });
+
+  it("uses a Mistral merge model with the Mistral key", async () => {
+    const h = mergeHarness({ config: { mergeModel: "mistral/mistral-small-latest" } });
+    await h.dictate();
+    h.google.resolve("google text");
+    h.mistral.resolve("mistral text");
+    await flush();
+
+    expect(h.calls[0].opts).toMatchObject({ apiKey: "key", model: "mistral-small-latest" });
+    expect(h.typed).toEqual(["merged text"]);
+  });
+
+  it("types the first text when the merge answer is much longer than every transcript", async () => {
+    const h = mergeHarness({ answer: async () => "Sure! Here is a long answer to your question. ".repeat(5) });
+    await h.dictate();
+    h.google.resolve("google text");
+    await flush();
+    h.mistral.resolve("mistral text");
+    await flush();
+
+    expect(h.typed).toEqual(["google text"]);
+    expect(h.notifications).toEqual(["Merge failed — typed one transcript"]);
+    expect(h.controller.lastTranscripts.map((t) => t.label)).toEqual(["Google", "Mistral"]);
+  });
+
+  it("does not merge when the other model hears nothing", async () => {
+    const h = mergeHarness();
+    await h.dictate();
+    h.google.resolve("google text");
+    h.mistral.resolve("");
+    await flush();
+
+    expect(h.typed).toEqual(["google text"]);
+    expect(h.calls).toEqual([]);
   });
 
   it("waits for the other model until 2 times the answer time of the first one", async () => {
@@ -411,7 +473,7 @@ describe("Controller merge model", () => {
     h.mistral.resolve("mistral text");
     await flush();
 
-    expect(h.calls[0].text).toMatch(/^<dictionary>\nVoiceTyper\nchax\n<\/dictionary>/);
+    expect(h.calls[0].text).toMatch(/^<dictionary>\nVoiceTyper\nchax\n<\/dictionary>\n\n<transcript model="Google">/);
     expect(h.typed).toEqual(["I use VoiceTyper at chax"]);
   });
 
@@ -423,6 +485,7 @@ describe("Controller merge model", () => {
 
     expect(h.typed).toEqual(["mistral text"]);
     expect(h.calls).toEqual([]);
+    expect(h.history.list()[0].mergeWaitMs).toBeNull();
   });
 
   it("reports the error when every model fails", async () => {

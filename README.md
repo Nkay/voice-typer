@@ -48,7 +48,8 @@ too short to count still types nothing.
 
 With more than one model checked, VoiceTyper asks all of them at the same time
 and types the first transcript that comes back (unless you set a
-[primary model](#primary-model)); later answers are dropped. A
+[primary model](#primary-model) or a [merge model](#merge-model)); later
+answers are dropped. A
 model that fails or hears nothing does not stop the others, so you never lose a
 dictation to a single provider outage. Only when every model fails does a
 notification name the first error.
@@ -92,12 +93,17 @@ Gemini Flash-Lite or a small Mistral model. The merge model:
 - keeps everything else as you said it.
 
 VoiceTyper waits for the other models until 2 times the answer time of the
-first one: an answer after 1.0 s gives the others until 2.0 s. Then it merges
-the transcripts that arrived. When only one transcript arrived, or when the
-merge fails, a transcript is typed as without a merge model (the primary's, if
-it arrived). The timing history shows the wait and the merge as their own
-steps, and a double press copies the merged text under `[Merged]`. Microsoft
-alone (live typing) is never merged.
+first one: an answer after 1.0 s gives the others until 2.0 s. The realtime
+Microsoft transcript is ready at the release, so the clock starts with the
+first other answer. Then VoiceTyper merges the transcripts that arrived. The
+merge model gets at most 100 dictionary terms and 5 s to answer.
+
+When only one transcript arrived, or when the merge fails, a transcript is
+typed as without a merge model (the primary's, if it arrived). A merged text
+that is much longer than every transcript counts as failed: the model then
+answered the dictation instead of writing it down. The timing history shows the
+wait and the merge as their own steps, and a double press copies the merged
+text under `[Merged]`.
 
 ### Copy every transcript
 
@@ -167,6 +173,9 @@ each one how long every step took:
   fills in its row when it does.
 - **wait for primary** — how long a finished transcript of another model
   waited for the primary model (see [Primary model](#primary-model)).
+- **wait for other models** — how long the first transcript waited for the
+  other models before the merge (see [Merge model](#merge-model)).
+- **merge** — the merge request; the note says "failed" when it failed.
 - **summary** — the summary request, for a dictation with the summary command.
 - **typing** — the synthesized keystrokes, with the number of characters. This
   includes any time typing waited for you to let go of a modifier key. With
